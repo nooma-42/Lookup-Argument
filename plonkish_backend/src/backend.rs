@@ -14,6 +14,7 @@ use std::{collections::BTreeSet, fmt::Debug};
 
 pub mod hyperplonk;
 pub mod unihyperplonk;
+pub mod baloo;
 
 pub trait PlonkishBackend<F: Field>: Clone + Debug {
     type Pcs: PolynomialCommitmentScheme<F>;
