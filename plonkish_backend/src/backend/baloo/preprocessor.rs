@@ -11,32 +11,29 @@ use crate::{
     Error,
 };
 
-pub fn preprocess<F: PrimeField, PCS: PolynomialCommitmentScheme<F>>(
-    param: &PCS::Param,
+pub fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>>(
+    param: &Pcs::Param,
     n: usize,
 ) -> Result<
     (
-        PCS::ProverParam,
-        BalooVerifierParam<F, PCS>,
+        Pcs::ProverParam,
+        BalooVerifierParam<F, Pcs>,
     ),
     Error,
     > {
         // let n = 1 << circuit_info.k;
         let mut rng = std_rng();
-        let param = PCS::setup(n, 1, &mut rng).unwrap();
-        let (pp, _) = PCS::trim(&param, n, 1).unwrap();
+        // let param = Pcs::setup(n, 1, &mut rng).unwrap();
+        let (pp, _) = Pcs::trim(&param, n, 1).unwrap();
 
-        // let pp = BalooProverParam {
-        //     num_vars: 1,
-        // };
-        // let z_h_poly = create_monomial_polynomial();
-        let z_h_poly = PCS::Polynomial::rand(n, &mut rng);
-
-        let t_poly = PCS::Polynomial::rand(n, &mut rng);
-        let z_h_comm_1 = PCS::commit(&pp, &z_h_poly).unwrap();
-        let t_comm_1 = PCS::commit(&pp, &t_poly).unwrap();
+        // todo
+        let z_h_poly = Pcs::Polynomial::rand(n, &mut rng);
+        // todo
+        let t_poly = Pcs::Polynomial::rand(n, &mut rng);
+        let z_h_comm_1 = Pcs::commit(&pp, &z_h_poly).unwrap();
+        let t_comm_1 = Pcs::commit(&pp, &t_poly).unwrap();
         // Alternatively, if you know the number of elements you will store, you can use `with_capacity`
-        let mut commitments: Vec<PCS::Commitment> = Vec::with_capacity(2); // Adjust the capacity as needed
+        let mut commitments: Vec<Pcs::Commitment> = Vec::with_capacity(2); // Adjust the capacity as needed
         commitments.push(z_h_comm_1);
         commitments.push(t_comm_1);
         let vp = BalooVerifierParam {
@@ -66,7 +63,7 @@ mod tests {
         let k = 10;
         let n = 1 << k;
         let param = Pcs::setup(n, 1, &mut rng).unwrap();
-        preprocess::<Fr, Pcs>(&param, n).unwrap(); // Explicitly specify Fr for F
+        let (pp, vp) = preprocess::<Fr, Pcs>(&param, n).unwrap(); // Explicitly specify Fr for F
 
         assert!(true);
     }
