@@ -13,10 +13,10 @@ use crate::{
         univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam},
     },
     util::{
-        arithmetic::{PrimeField, MultiMillerLoop},
+        arithmetic::{Field, PrimeField, MultiMillerLoop},
         test::std_rng,
         Deserialize, DeserializeOwned, Itertools, Serialize,
-        transcript::{TranscriptRead, TranscriptWrite},
+        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
     }
 };
 
@@ -49,7 +49,7 @@ pub struct Baloo<F> {
     // round1: (&self, &UnivariateKzgProverParam<M>, Vec<F>, Vec<F>) -> Vec<F>
 }
 
-impl<F> Baloo<F>
+impl<F: Field> Baloo<F>
 {
     /*
     How to calculate ξ(x)(or v(x) in code)
@@ -80,7 +80,13 @@ impl<F> Baloo<F>
     xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
     Interpolation with xi and get polynomial: ξ(x)
     */
-    fn round1(&self, lookup: Vec<F>) -> Vec<F> {
+    fn round1<Pcs, T>(&self, lookup: Vec<F>) -> Vec<F>
+    where
+        Pcs: PolynomialCommitmentScheme<F>,
+        T: TranscriptRead<Pcs::CommitmentChunk, F>
+            + TranscriptWrite<Pcs::CommitmentChunk, F>
+            + InMemoryTranscript<Param = ()>,
+    {
         type Pcs = UnivariateKzg<Bn256>;
         // type ProverParam = UnivariateKzgProverParam<M>;
         let m = lookup.len();
@@ -92,6 +98,10 @@ impl<F> Baloo<F>
             let poly_size = 1 << m;
             let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
             Pcs::trim(&param, poly_size, 1).unwrap()
+        };
+        // Commit and open
+        let proof = {
+            let mut transcript = T::new(());
         };
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
@@ -203,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_prover() {
-        let lookup = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let table = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let lookup = vec![Field::ONE];
+        let table = vec![Field::ONE];
         let m = lookup.len();
         let mut rng = std_rng();
         // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
@@ -212,6 +222,6 @@ mod tests {
         let baloo = Baloo{ table };
 
         let pp = param;
-        let msg_1 = baloo.round1(lookup);
+        let msg_1 = baloo.round1::<Pcs, Keccak256Transcript<_>>(lookup);
     }
 }
