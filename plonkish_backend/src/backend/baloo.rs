@@ -3,10 +3,16 @@ use std::{collections::HashSet, fmt::Debug, hash::Hash, iter, marker::PhantomDat
 
 use bincode::Error;
 use halo2_proofs::transcript;
+use halo2_curves::bn256::Bn256;
 
 use crate::{
-    backend::baloo::preprocessor::preprocess, pcs::PolynomialCommitmentScheme, poly::univariate::UnivariatePolynomial, util::{
-        arithmetic::PrimeField,
+    backend::baloo::preprocessor::preprocess,
+    pcs::{
+        PolynomialCommitmentScheme,
+        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam},
+    },
+    util::{
+        arithmetic::{PrimeField, MultiMillerLoop},
         test::std_rng,
         Deserialize, DeserializeOwned, Itertools, Serialize,
         transcript::{TranscriptRead, TranscriptWrite},
@@ -37,43 +43,13 @@ where
     // [z_H_comm_1, t_comm_1]
     pub(crate) preprocess_comms: Vec<Pcs::Commitment>,
 }
-
-#[derive(Clone, Debug)]
-pub struct Baloo<F, Pcs>
-{
-    setup: Setup,
-    m: usize,
-    phi_poly: Polynomial,
-    phi_comm_1: G1Commitment,
-    h_i: Vec<RootOfUnity>,
-    z_i_poly: Polynomial,
-    col: Vec<usize>,
-    v_poly: Polynomial,
-    t_i_poly: Polynomial,
-    roots_of_unity_n: Vec<RootOfUnity>,
+pub struct Baloo<F> {
     table: Vec<F>,
+    // round1: (&self, &UnivariateKzgProverParam<M>, Vec<F>, Vec<F>) -> Vec<F>
 }
 
-impl<F, Pcs> Baloo<F, Pcs>
+impl<F> Baloo<F>
 {
-    pub fn new(n: usize) -> Self {
-        let roots_of_unity_n = Vec::new();
-        let table = Vec::new();
-        Self {
-            setup: Setup::new(),
-            m: 0,
-            phi_poly: Polynomial::new(Vec::new(), Basis::Lagrange),
-            phi_comm_1: G1Commitment::new(),
-            h_i: Vec::new(),
-            z_i_poly: Polynomial::new(Vec::new(), Basis::Lagrange),
-            col: Vec::new(),
-            v_poly: Polynomial::new(Vec::new(), Basis::Lagrange),
-            t_i_poly: Polynomial::new(Vec::new(), Basis::Lagrange),
-            roots_of_unity_n,
-            table,
-        }
-    }
-
     /*
     How to calculate ξ(x)(or v(x) in code)
 
@@ -103,114 +79,67 @@ impl<F, Pcs> Baloo<F, Pcs>
     xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
     Interpolation with xi and get polynomial: ξ(x)
     */
-
-    fn round1(&self, pp: <Baloo<F, Pcs> as PlonkishBackend<F>>::ProverParam, lookup: Vec<F>, table: Vec<F>) -> Vec<F> {
+    fn round1(&self, lookup: Vec<F>) -> Vec<F> {
+        type Pcs = UnivariateKzg<Bn256>;
+        // type ProverParam = UnivariateKzgProverParam<M>;
         let m = lookup.len();
+        let mut rng = std_rng();
         // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
-        let phi_poly = UnivariatePolynomial::new(lookup);
+        let param = Pcs::setup(m, 1, &mut rng).unwrap();
+        // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
-        let phi_comm_1 = self.setup.commit_g1(&pp, &phi_poly);
+        // let phi_comm_1 = Self::setup.commit_g1(&pp, &phi_poly);
         // let phi_comm_1 = Pcs::commit(&pp, &phi_poly);
         // remove duplicated elements
-        let t_values_from_lookup: HashSet<_> = lookup.into_iter().collect();
-        // I: the index of t_values_from_lookup elements in sub table t_I
-        let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
-        let roots_of_unity = Vec::new(); // TODO: get roots of unity
-        // H_I = {ξ_i} , i = [1, k], ξ(Xi)
-        let h_i = i_values.iter().map(|&i| roots_of_unity[i]).collect();
-        let h_i_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup); // TODO: implement interpolation polynomial
-        // Multiple all root polynomial: (X - I_0)(X - I_1)(X - I_2)...
-        let mut col_values = Vec::new();
-        let mut v_values = Vec::new();
-        for i in 0..m {
-            // find the index of 1 in jth row of M
-            let col_i = t_values_from_lookup.iter().position(|&x| x == lookup[i]).unwrap();
-            col_values.push(col_i);
-            let col_i_root = h_i[col_i];
-            // Note: v = 1 / col_i_root in paper
-            // Here we use different construction that does not affect the verification
-            let v = col_i_root;
-            v_values.push(v);
-        }
-        // Vanishing polynomial in coefficient form
-        self.z_i_poly = h_i_interp_poly.vanishing_poly();
-        assert_eq!(col_values.iter().map(|&elem| t_values_from_lookup[elem]).collect::<Vec<_>>(), lookup);
-        // ξ(x) polynomial
-        let v_poly = Polynomial::new(v_values, Basis::Lagrange);
-        // Refer to section 5. cannot use FFT due to it's not in multiplicative subgroup
-        let t_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup);
-        self.t_i_poly = t_interp_poly.poly();
+        // let t_values_from_lookup: HashSet<_> = lookup.into_iter().collect();
+        // // I: the index of t_values_from_lookup elements in sub table t_I
+        // let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
+        // let roots_of_unity = Vec::new(); // TODO: get roots of unity
+        // // H_I = {ξ_i} , i = [1, k], ξ(Xi)
+        // let h_i = i_values.iter().map(|&i| roots_of_unity[i]).collect();
+        // let h_i_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup); // TODO: implement interpolation polynomial
+        // // Multiple all root polynomial: (X - I_0)(X - I_1)(X - I_2)...
+        // let mut col_values = Vec::new();
+        // let mut v_values = Vec::new();
+        // for i in 0..m {
+        //     // find the index of 1 in jth row of M
+        //     let col_i = t_values_from_lookup.iter().position(|&x| x == lookup[i]).unwrap();
+        //     col_values.push(col_i);
+        //     let col_i_root = h_i[col_i];
+        //     // Note: v = 1 / col_i_root in paper
+        //     // Here we use different construction that does not affect the verification
+        //     let v = col_i_root;
+        //     v_values.push(v);
+        // }
+        // // Vanishing polynomial in coefficient form
+        // Self::z_i_poly = h_i_interp_poly.vanishing_poly();
+        // assert_eq!(col_values.iter().map(|&elem| t_values_from_lookup[elem]).collect::<Vec<_>>(), lookup);
+        // // ξ(x) polynomial
+        // let v_poly = Polynomial::new(v_values, Basis::Lagrange);
+        // // Refer to section 5. cannot use FFT due to it's not in multiplicative subgroup
+        // let t_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup);
+        // Self::t_i_poly = t_interp_poly.poly();
 
-        self.col = col_values.clone();
-        self.h_i = h_i;
-        self.phi_poly = phi_poly.ifft();
-        self.phi_comm_1 = self.setup.commit_g1(&self.phi_poly);
-        self.v_poly = v_poly.ifft();
+        // Self::col = col_values.clone();
+        // Self::h_i = h_i;
+        // Self::phi_poly = phi_poly.ifft();
+        // Self::phi_comm_1 = Self::setup.commit_g1(&Self::phi_poly);
+        // Self::v_poly = v_poly.ifft();
 
-        // Commit
-        // π1 = ([z_i]_2 = [z_i(x)]_2, [v]_1 = [v(x)]_1, t = [t(x)]_1)
-        self.z_i_comm_2 = self.setup.commit_g2(&self.z_i_poly);
-        self.v_comm_1 = self.setup.commit_g1(&self.v_poly);
-        self.t_i_comm_1 = self.setup.commit_g1(&self.t_i_poly);
+        // // Commit
+        // // π1 = ([z_i]_2 = [z_i(x)]_2, [v]_1 = [v(x)]_1, t = [t(x)]_1)
+        // Self::z_i_comm_2 = Self::setup.commit_g2(&Self::z_i_poly);
+        // Self::v_comm_1 = Self::setup.commit_g1(&Self::v_poly);
+        // Self::t_i_comm_1 = Self::setup.commit_g1(&Self::t_i_poly);
 
-        Message1::new(self.z_i_comm_2.clone(), self.v_comm_1.clone(), self.t_i_comm_1.clone(), self.phi_comm_1.clone())
-
+        // Message1::new(Self::z_i_comm_2.clone(), Self::v_comm_1.clone(), Self::t_i_comm_1.clone(), Self::phi_comm_1.clone())
+        Vec::new()
     }
 
-}
+    // type Pcs = Pcs;
+    // type ProverParam = BalooProverParam;
+    // type VerifierParam = BalooVerifierParam<F, Pcs>;
 
-
-impl<F, Pcs> PlonkishBackend<F> for Baloo<F, Pcs>
-where
-    F: PrimeField + Hash + Serialize + DeserializeOwned,
-    Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>,
-{
-    type Pcs = Pcs;
-    type ProverParam = BalooProverParam;
-    type VerifierParam = BalooVerifierParam<F, Pcs>;
-
-    fn setup(
-        n: usize,
-        rng: impl RngCore
-    ) -> Result<Pcs::Param, Error> {
-        Pcs::setup(n, 1, &mut rng).unwrap();
-    }
-
-    fn preprocess(
-        param: &Pcs::Param,
-        n: usize
-    ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
-        preprocess(param, n);
-    }
-
-    fn prove(
-        pp: &Self::ProverParam,
-        table: Vec<F>,
-        lookup: Vec<F>,
-        transcript: &mut impl TranscriptWrite<Pcs::CommitmentChunk, F>
-    ) -> Result<(), Error> {
-        // t_poly in in lagrange basis
-        let msg_1 = Baloo::round1(pp, lookup, table);
-        let (alpha, beta) = transcript.round_1(msg_1);
-
-        // let msg_2 = round2(pp);
-        // let (gamma, zeta) = transcript.round_2(msg_2);
-
-        // let msg_3 = round3(pp);
-
-        Ok(())
-    }
-
-    fn verify(
-            vp: &Self::VerifierParam,
-            instances: &[Vec<F>],
-            transcript: &mut impl crate::util::transcript::TranscriptRead<crate::pcs::CommitmentChunk<F, Self::Pcs>, F>,
-            rng: impl RngCore,
-        ) -> Result<(), crate::Error> {
-            Ok(())
-
-
-    }
 }
 
 
@@ -262,14 +191,20 @@ enum Basis {
 
 #[cfg(test)]
 mod tests {
-    use super::Baloo;
+    use super::*;
+    type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
     fn test_prover() {
-        let baloo = Baloo::new(10);
-        let pp = baloo.setup.pp;
         let lookup = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let table = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let msg_1 = baloo.round1(&pp, lookup, table);
+        let m = lookup.len();
+        let mut rng = std_rng();
+        // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
+        let param = Pcs::setup(m, 1, &mut rng).unwrap();
+        let baloo = Baloo{ table };
+
+        let pp = param;
+        let msg_1 = baloo.round1(lookup);
     }
 }
