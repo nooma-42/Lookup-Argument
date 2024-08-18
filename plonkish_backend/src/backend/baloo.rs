@@ -109,11 +109,16 @@ impl<F: Field> Baloo<F>
         // Commit and open
         let proof = {
             let mut transcript = T::new(());
-            let poly = Pcs::Polynomial::lagrange(
+            let poly = Pcs::Polynomial::monomial(
                 lookup.clone(),
             );
             print!("coeffs: {:?}\n", poly.coeffs());
             let comm = Pcs::commit_and_write(&pp, &poly, &mut transcript).unwrap();
+            let point = Pcs::Polynomial::squeeze_point(m, &mut transcript);
+            let eval = poly.evaluate(&point);
+            transcript.write_field_element(&eval).unwrap();
+            Pcs::open(&pp, &poly, &comm, &point, &eval, &mut transcript).unwrap();
+            transcript.into_proof()
         };
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
