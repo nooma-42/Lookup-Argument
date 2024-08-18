@@ -88,7 +88,7 @@ impl<F: Field> Baloo<F>
     */
     fn round1<Pcs, T>(&self, lookup: Vec<F>) -> Vec<F>
     where
-        Pcs: PolynomialCommitmentScheme<F>,
+        Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>,
         T: TranscriptRead<Pcs::CommitmentChunk, F>
             + TranscriptWrite<Pcs::CommitmentChunk, F>
             + InMemoryTranscript<Param = ()>,
@@ -100,16 +100,20 @@ impl<F: Field> Baloo<F>
         // Setup
         let (pp, vp) = {
             let mut rng = OsRng;
-            let poly_size = 1 << m;
+            let poly_size = m;
+            print!("poly_size: {:?}\n", poly_size);
             let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
             Pcs::trim(&param, poly_size, 1).unwrap()
         };
+        print!("lookup: {:?}\n", lookup);
         // Commit and open
         let proof = {
             let mut transcript = T::new(());
-            let poly = <UnivariatePolynomial<F>>::lagrange(
+            let poly = Pcs::Polynomial::lagrange(
                 lookup.clone(),
             );
+            print!("coeffs: {:?}\n", poly.coeffs());
+            let comm = Pcs::commit_and_write(&pp, &poly, &mut transcript).unwrap();
         };
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
@@ -174,8 +178,8 @@ mod tests {
 
     #[test]
     fn test_prover() {
-        let lookup = vec![Field::ONE];
-        let table = vec![Field::ONE];
+        let lookup = vec![Field::ONE, Field::ONE];
+        let table = vec![Field::ONE, Field::ONE];
         let m = lookup.len();
         let mut rng = std_rng();
         // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
