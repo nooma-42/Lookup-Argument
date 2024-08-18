@@ -1,3 +1,4 @@
+use rand::{rngs::OsRng, Rng};
 use rand::RngCore;
 use std::{collections::HashSet, fmt::Debug, hash::Hash, iter, marker::PhantomData};
 
@@ -85,7 +86,13 @@ impl<F> Baloo<F>
         let m = lookup.len();
         let mut rng = std_rng();
         // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
-        let param = Pcs::setup(m, 1, &mut rng).unwrap();
+        // Setup
+        let (pp, vp) = {
+            let mut rng = OsRng;
+            let poly_size = 1 << m;
+            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+            Pcs::trim(&param, poly_size, 1).unwrap()
+        };
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
         // let phi_comm_1 = Self::setup.commit_g1(&pp, &phi_poly);
