@@ -120,6 +120,19 @@ impl<F: Field> Baloo<F>
             Pcs::open(&pp, &poly, &comm, &point, &eval, &mut transcript).unwrap();
             transcript.into_proof()
         };
+        // Verify
+        let result = {
+            let mut transcript = T::from_proof((), proof.as_slice());
+            Pcs::verify(
+                &vp,
+                &Pcs::read_commitment(&vp, &mut transcript).unwrap(),
+                &<Pcs::Polynomial as Polynomial<F>>::squeeze_point(m, &mut transcript),
+                &transcript.read_field_element().unwrap(),
+                &mut transcript,
+            )
+        };
+        assert_eq!(result, Ok(()));
+
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
         // let phi_comm_1 = Self::setup.commit_g1(&pp, &phi_poly);
