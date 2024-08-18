@@ -6,7 +6,10 @@ use bincode::Error;
 use halo2_proofs::transcript;
 use halo2_curves::bn256::Bn256;
 
+use crate::pcs::univariate;
 use crate::{
+    poly::Polynomial,
+    poly::univariate::{UnivariateBasis::*, UnivariatePolynomial},
     backend::baloo::preprocessor::preprocess,
     pcs::{
         PolynomialCommitmentScheme,
@@ -51,6 +54,9 @@ pub struct Baloo<F> {
 
 impl<F: Field> Baloo<F>
 {
+    pub fn new(table: Vec<F>) -> Self {
+        Baloo { table }
+    }
     /*
     How to calculate ξ(x)(or v(x) in code)
 
@@ -87,7 +93,6 @@ impl<F: Field> Baloo<F>
             + TranscriptWrite<Pcs::CommitmentChunk, F>
             + InMemoryTranscript<Param = ()>,
     {
-        type Pcs = UnivariateKzg<Bn256>;
         // type ProverParam = UnivariateKzgProverParam<M>;
         let m = lookup.len();
         let mut rng = std_rng();
@@ -102,6 +107,9 @@ impl<F: Field> Baloo<F>
         // Commit and open
         let proof = {
             let mut transcript = T::new(());
+            let poly = <UnivariatePolynomial<F>>::lagrange(
+                lookup.clone(),
+            );
         };
         // let phi_poly = Pcs::new(lookup);
         // commit phi(X) on G1
@@ -157,53 +165,6 @@ impl<F: Field> Baloo<F>
     // type ProverParam = BalooProverParam;
     // type VerifierParam = BalooVerifierParam<F, Pcs>;
 
-}
-
-
-// Placeholder types and methods for the sake of example
-struct Setup;
-struct Scalar(usize);
-struct Polynomial;
-struct G1Commitment;
-struct RootOfUnity;
-struct Message1;
-
-impl Polynomial {
-    fn new(values: Vec<Scalar>, basis: Basis) -> Self {
-        // Implementation here
-        Polynomial
-    }
-
-    fn ifft(&self) -> Self {
-        // Implementation here
-        Polynomial
-    }
-}
-
-pub struct InterpolationPoly {
-    h_i: Vec<RootOfUnity>,
-    t_values: Vec<Scalar>,
-    new: fn (h_i: &[RootOfUnity], t_values: &[Scalar]) -> Self,
-    vanishing_poly: fn () -> Polynomial,
-    poly: fn () -> Polynomial,
-}
-
-
-impl InterpolationPoly {
-    fn vanishing_poly() -> Polynomial {
-        // Implementation here
-        Polynomial
-    }
-
-    fn poly() -> Polynomial {
-        // Implementation here
-        Polynomial
-    }
-}
-
-// Placeholder enum for Basis
-enum Basis {
-    Lagrange,
 }
 
 #[cfg(test)]
