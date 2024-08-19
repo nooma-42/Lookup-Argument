@@ -1,29 +1,24 @@
-use rand::{rngs::OsRng, Rng};
-use rand::RngCore;
-use std::{collections::HashSet, fmt::Debug, hash::Hash, iter, marker::PhantomData};
+use rand::rngs::OsRng;
+use std::{fmt::Debug, marker::PhantomData};
 
-use bincode::Error;
-use halo2_proofs::transcript;
 use halo2_curves::bn256::Bn256;
 
-use crate::pcs::univariate;
 use crate::{
     poly::Polynomial,
-    poly::univariate::{UnivariateBasis::*, UnivariatePolynomial},
+    poly::univariate::UnivariatePolynomial,
     backend::baloo::preprocessor::preprocess,
     pcs::{
         PolynomialCommitmentScheme,
         univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam},
     },
     util::{
-        arithmetic::{Field, PrimeField, MultiMillerLoop},
+        arithmetic::{Field, PrimeField, MultiMillerLoop, root_of_unity},
         test::std_rng,
         Deserialize, DeserializeOwned, Itertools, Serialize,
         transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
     }
 };
 
-use super::PlonkishBackend;
 
 pub mod preprocessor;
 pub mod prover;
@@ -192,13 +187,15 @@ impl<F: Field> Baloo<F>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use halo2_curves::bn256::Fr;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
+    use num_bigint::BigUint;
 
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
-    fn test_prover() {
+    fn test_e2e() {
         let lookup = vec![Fr::one(), Fr::one()];
         let table = vec![Fr::one(), Fr::one()];
         let m = lookup.len();
@@ -244,6 +241,45 @@ mod tests {
             )
         };
         assert_eq!(result, Ok(()));
+
+    }
+
+    #[test]
+    fn test_round1() {
+        let lookup = vec![Fr::one(), Fr::one()];
+        let table = vec![Fr::one(), Fr::one()];
+        let m = lookup.len();
+        let mut rng = std_rng();
+
+        // Setup
+        let (pp, vp) = {
+            let mut rng = OsRng;
+            let poly_size = m;
+            print!("poly_size: {:?}\n", poly_size);
+            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+            Pcs::trim(&param, poly_size, 1).unwrap()
+        };
+        print!("lookup: {:?}\n", lookup);
+
+        // Commit and open
+        let mut transcript = Keccak256Transcript::new(());
+        // commit phi(X) on G1
+        let phi_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::monomial(lookup.clone());
+        print!("coeffs: {:?}\n", phi_poly.coeffs());
+        let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
+        // remove duplicated elements
+        let t_values_from_lookup: HashSet<_> = lookup.into_iter().collect();
+        // I: the index of t_values_from_lookup elements in sub table t_I
+        let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
+        let root_of_unity = root_of_unity::<Fr>(m);
+        // H_I = {ξ_i} , i = [1...k], ξ(Xi)
+        let h_i: Vec<_> = i_values.iter().map(|&i| {
+            let i_as_u64 = i as u64;
+            root_of_unity.pow(&[i_as_u64][..])
+        }).collect();
+        // let h_i_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup); // TODO: implement interpolation polynomial
+
+
 
     }
 }
