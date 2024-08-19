@@ -192,19 +192,58 @@ impl<F: Field> Baloo<F>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use halo2_curves::bn256::Fr;
+    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
+
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
     fn test_prover() {
-        let lookup = vec![Field::ONE, Field::ONE];
-        let table = vec![Field::ONE, Field::ONE];
+        let lookup = vec![Fr::one(), Fr::one()];
+        let table = vec![Fr::one(), Fr::one()];
         let m = lookup.len();
         let mut rng = std_rng();
-        // let phi_values = lookup.iter().map(|&x| PrimeField::<F>::from(x)).collect::<Vec<F>>();
-        let param = Pcs::setup(m, 1, &mut rng).unwrap();
-        let baloo = Baloo{ table };
 
-        let pp = param;
-        let msg_1 = baloo.round1::<Pcs, Keccak256Transcript<_>>(lookup);
+        // Setup
+        let (pp, vp) = {
+            let mut rng = OsRng;
+            let poly_size = m;
+            print!("poly_size: {:?}\n", poly_size);
+            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+            Pcs::trim(&param, poly_size, 1).unwrap()
+        };
+        print!("lookup: {:?}\n", lookup);
+
+        // Commit and open
+        let proof = {
+            let mut transcript = Keccak256Transcript::new(());
+            let poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::monomial(lookup.clone());
+            print!("coeffs: {:?}\n", poly.coeffs());
+            let comm = Pcs::commit_and_write(&pp, &poly, &mut transcript).unwrap();
+            let point = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(m, &mut transcript);
+            let eval = poly.evaluate(&point);
+
+            // Use the correct method to write the field element
+            transcript.write_field_element(&eval).unwrap();
+
+            Pcs::open(&pp, &poly, &comm, &point, &eval, &mut transcript).unwrap();
+            transcript.into_proof()
+        };
+
+        // Verify
+        let result = {
+            let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+            Pcs::verify(
+                &vp,
+                &Pcs::read_commitment(&vp, &mut transcript).unwrap(),
+                &<Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(m, &mut transcript),
+
+                // Use the correct method to read the field element
+                &transcript.read_field_element().unwrap(),
+                &mut transcript,
+            )
+        };
+        assert_eq!(result, Ok(()));
+
     }
 }
