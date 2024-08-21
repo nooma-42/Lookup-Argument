@@ -252,19 +252,17 @@ mod tests {
         let mut rng = std_rng();
 
         // Setup
-        let (pp, vp) = {
-            let mut rng = OsRng;
-            let poly_size = m;
-            print!("poly_size: {:?}\n", poly_size);
-            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
-            Pcs::trim(&param, poly_size, 1).unwrap()
-        };
+        let mut rng = OsRng;
+        let poly_size = m;
+        print!("poly_size: {:?}\n", poly_size);
+        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
         print!("lookup: {:?}\n", lookup);
 
         // Commit and open
         let mut transcript = Keccak256Transcript::new(());
         // commit phi(X) on G1
-        let phi_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::monomial(lookup.clone());
+        let phi_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial ::lagrange(lookup.clone());
         print!("coeffs: {:?}\n", phi_poly.coeffs());
         let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
         // remove duplicated elements
@@ -278,7 +276,9 @@ mod tests {
             root_of_unity.pow(&[i_as_u64][..])
         }).collect();
         // let h_i_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup); // TODO: implement interpolation polynomial
-
+        let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
+        let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
+        print!("z_i_comm_2: {:?}\n", z_i_comm_2);
 
 
     }
