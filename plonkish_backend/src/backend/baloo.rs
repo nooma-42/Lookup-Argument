@@ -266,7 +266,7 @@ mod tests {
         print!("coeffs: {:?}\n", phi_poly.coeffs());
         let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
         // remove duplicated elements
-        let t_values_from_lookup: HashSet<_> = lookup.into_iter().collect();
+        let t_values_from_lookup: HashSet<_> = lookup.clone().into_iter().collect();
         // I: the index of t_values_from_lookup elements in sub table t_I
         let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
         let root_of_unity = root_of_unity::<Fr>(m);
@@ -279,6 +279,21 @@ mod tests {
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         print!("z_i_comm_2: {:?}\n", z_i_comm_2);
+
+        let mut col_values = Vec::new();
+        let mut v_values = Vec::new();
+        for i in 0..m {
+            // find the index of 1 in jth row of M
+            let col_i = t_values_from_lookup.iter().position(|&x| x == lookup[i]).unwrap();
+            col_values.push(col_i);
+            let col_i_root = h_i[col_i];
+            // Note: v = 1 / col_i_root in paper
+            // Here we use different construction that does not affect the verification
+            let v = col_i_root;
+            v_values.push(v);
+        }
+        // ξ(x) polynomial
+        let v_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial ::lagrange(v_values.clone());
 
 
     }
