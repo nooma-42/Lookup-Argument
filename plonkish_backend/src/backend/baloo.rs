@@ -1,7 +1,7 @@
 use rand::rngs::OsRng;
 use std::{fmt::Debug, marker::PhantomData};
 
-use halo2_curves::bn256::Bn256;
+use halo2_curves::bn256::{Bn256, Fr};
 
 use crate::{
     poly::Polynomial,
@@ -184,6 +184,29 @@ impl<F: Field> Baloo<F>
 
 }
 
+fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> UnivariatePolynomial<Fr> {
+    let vanishing_poly = UnivariatePolynomial::vanishing(h_i_values, Fr::one());
+    let mut bary_centric_weights = vec![Fr::one(); h_i_values.len()];
+    let mut sum = UnivariatePolynomial::monomial(vec![Fr::zero()]);
+    for (idx, h_i) in h_i_values.iter().enumerate() {
+        print!("h_i: {:?}\n", h_i);
+        for (jdx, h_j) in h_i_values.iter().enumerate() {
+            if jdx == idx {
+                continue;
+            }
+            bary_centric_weights[idx] = bary_centric_weights[idx] * (h_i - h_j).invert().unwrap();
+        }
+        let y_i = t_values_from_lookup[idx];
+        print!("y_i: {:?}\n", y_i);
+        // x - x_i
+        let v_poly = UnivariatePolynomial::monomial(vec![-h_i, Fr::one()]);
+        let (v_poly_inv, _) = vanishing_poly.div_rem(&v_poly);
+        let accu = &v_poly_inv * (y_i * bary_centric_weights[idx]);
+        sum += accu;
+    }
+    sum
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +216,16 @@ mod tests {
     use num_bigint::BigUint;
 
     type Pcs = UnivariateKzg<Bn256>;
+
+    #[test]
+    fn test_interpolation_poly() {
+        let h_i = vec![Fr::from(2), Fr::from(3), Fr::from(4)];
+        let t_values_from_lookup = vec![Fr::from(4), Fr::from(9), Fr::from(16)];
+        // f(x) = x^2
+        let poly = lagrange_interp(&h_i, &t_values_from_lookup);
+        assert_eq!(poly.coeffs(), vec![Fr::from(0), Fr::from(0), Fr::from(1)]);
+        assert_eq!(poly.evaluate(&Fr::from(5)), Fr::from(25));
+    }
 
     #[test]
     fn test_e2e() {
@@ -246,10 +279,9 @@ mod tests {
 
     #[test]
     fn test_round1() {
-        let lookup = vec![Fr::one(), Fr::one()];
-        let table = vec![Fr::one(), Fr::one()];
+        let lookup = vec![Fr::from(3), Fr::from(7), Fr::from(3), Fr::from(4)];
+        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
         let m = lookup.len();
-        let mut rng = std_rng();
 
         // Setup
         let mut rng = OsRng;
@@ -275,7 +307,11 @@ mod tests {
             let i_as_u64 = i as u64;
             root_of_unity.pow(&[i_as_u64][..])
         }).collect();
-        // let h_i_interp_poly = InterpolationPoly::new(&h_i, &t_values_from_lookup); // TODO: implement interpolation polynomial
+        print!("h_i: {:?}\n", h_i);
+        print!("t_values_from_lookup: {:?}\n", t_values_from_lookup);
+        // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
+        let t_values_vec: Vec<Fr> = t_values_from_lookup.iter().cloned().collect();
+        let t_interp_poly = lagrange_interp(&h_i, &t_values_vec);
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         print!("z_i_comm_2: {:?}\n", z_i_comm_2);
