@@ -312,6 +312,8 @@ mod tests {
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
         let t_values_vec: Vec<Fr> = t_values_from_lookup.iter().cloned().collect();
         let t_interp_poly = lagrange_interp(&h_i, &t_values_vec);
+        let t_commit_1 = Pcs::commit_and_write(&pp, &t_interp_poly, &mut transcript);
+
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         print!("z_i_comm_2: {:?}\n", z_i_comm_2);
