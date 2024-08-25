@@ -330,6 +330,8 @@ mod tests {
         }
         // ξ(x) polynomial
         let v_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial ::lagrange(v_values.clone());
+        let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
+        print!("v_comm_1: {:?}\n", v_comm_1);
 
 
     }
