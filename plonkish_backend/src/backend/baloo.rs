@@ -189,7 +189,6 @@ fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> Univariate
     let mut bary_centric_weights = vec![Fr::one(); h_i_values.len()];
     let mut sum = UnivariatePolynomial::monomial(vec![Fr::zero()]);
     for (idx, h_i) in h_i_values.iter().enumerate() {
-        print!("h_i: {:?}\n", h_i);
         for (jdx, h_j) in h_i_values.iter().enumerate() {
             if jdx == idx {
                 continue;
@@ -197,7 +196,6 @@ fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> Univariate
             bary_centric_weights[idx] = bary_centric_weights[idx] * (h_i - h_j).invert().unwrap();
         }
         let y_i = t_values_from_lookup[idx];
-        print!("y_i: {:?}\n", y_i);
         // x - x_i
         let v_poly = UnivariatePolynomial::monomial(vec![-h_i, Fr::one()]);
         let (v_poly_inv, _) = vanishing_poly.div_rem(&v_poly);
@@ -213,7 +211,6 @@ mod tests {
     use std::collections::HashSet;
     use halo2_curves::bn256::Fr;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
-    use num_bigint::BigUint;
 
     type Pcs = UnivariateKzg<Bn256>;
 
@@ -232,7 +229,6 @@ mod tests {
         let lookup = vec![Fr::one(), Fr::one()];
         let table = vec![Fr::one(), Fr::one()];
         let m = lookup.len();
-        let mut rng = std_rng();
 
         // Setup
         let (pp, vp) = {
@@ -294,9 +290,10 @@ mod tests {
         // Commit and open
         let mut transcript = Keccak256Transcript::new(());
         // commit phi(X) on G1
-        let phi_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial ::lagrange(lookup.clone());
+        let phi_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::lagrange(lookup.clone());
         print!("coeffs: {:?}\n", phi_poly.coeffs());
         let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
+
         // remove duplicated elements
         let t_values_from_lookup: HashSet<_> = lookup.clone().into_iter().collect();
         // I: the index of t_values_from_lookup elements in sub table t_I
@@ -316,6 +313,8 @@ mod tests {
 
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
+        // TODO
+        // transcript.write_commitments(&z_i_comm_2.0.x.c0).unwrap();
         print!("z_i_comm_2: {:?}\n", z_i_comm_2);
 
         let mut col_values = Vec::new();
@@ -331,7 +330,7 @@ mod tests {
             v_values.push(v);
         }
         // ξ(x) polynomial
-        let v_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial ::lagrange(v_values.clone());
+        let v_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::lagrange(v_values.clone());
         let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         print!("v_comm_1: {:?}\n", v_comm_1);
 
