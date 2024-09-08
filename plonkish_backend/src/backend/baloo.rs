@@ -333,7 +333,108 @@ mod tests {
         let v_poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::lagrange(v_values.clone());
         let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         print!("v_comm_1: {:?}\n", v_comm_1);
+        self::z_i_poly = z_i_poly;
+        self::v_poly = v_poly;
+        self::t_i_poly = t_interp_poly;
+        self::col = col_values;
+        self::h_i = h_i;
+        self::phi_poly = phi_poly;
+        self::m = m;
+    }
 
+    #[test]
+    fn test_round2() {
+        // TODO: get randomness from transcript
+        let alpha = 2;
+        let beta = 3;
+        let z_i_poly = self::z_i_poly.clone();
+        let v_poly = self::v_poly.clone();
+        let t_i_poly = self::t_i_poly.clone();
+        let col = self::col.clone();
+        let h_i = self::h_i.clone();
+        let phi_poly = self::phi_poly.clone();
+        let m = self::m;
 
+        let scalar_0 = Fr::from(0);
+        let scalar_1 = Fr::from(1);
+
+        let zero_poly = UnivariatePolynomial::monomial(vec![scalar_0]);
+
+        let v_root_of_unity = root_of_unity(m);
+        // [-1, 0, 0, ..., 1], m - 1 0s in between
+        let z_v_values = vec![scalar_1] + (0..m - 1).map(|_| scalar_0).collect_vec() + vec![scalar_1];
+        // X^m - 1
+        let z_v_poly = UnivariatePolynomial::monomial(&z_v_values);
+        // z_I(0)
+        let z_i_at_0 = z_i_poly.evaluate(&scalar_0);
+        // calculate D(X) = Σ_{0, m-1} μ_i(α) * τ^_{col(i)}(X)
+        let d_poly = zero_poly.clone();
+        let e_poly = zero_poly.clone();
+        for i in 0..m {
+            // col(i)
+            let col_i = col[i];
+            // ω^i
+            let v_root = v_root_of_unity ** i;
+            // X - ω^i
+            let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
+            // ξ_i
+            let col_i_root = h_i[col_i];
+            let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
+            // Lagrange polynomial on V: μ_i(X)
+            let mu_poly = z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
+            // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
+            let normalized_lag_poly = z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
+            // μ_i(α)
+            let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
+            // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
+            let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
+            // D(X) = Σ_i(μ_i(α) * normalized_lag_poly)
+            d_poly += normalized_lag_poly * mu_poly_at_alpha;
+            // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
+            e_poly += mu_poly * normalized_lag_poly_at_beta
+        }
+        print!("d_poly: {:?}\n", d_poly);
+        print!("e_poly: {:?}\n", e_poly);
+
+        // D(X) * t_I(X)
+        let d_t_poly = d_poly * t_i_poly;
+        // φ(α)
+        let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
+        print!("d_t_poly: {:?}\n", d_t_poly);
+        print!("phi_poly_at_alpha: {:?}\n", phi_poly_at_alpha);
+
+        // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
+        let (q_d_poly, r_poly) = (d_t_poly - phi_poly_at_alpha).div_rem(&z_i_poly);
+        print!("q_d_poly: {:?}\n", q_d_poly);
+        print!("r_poly: {:?}\n", r_poly);
+
+        // Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
+        let z_i_at_beta = z_i_poly.evaluate(&beta);
+        let q_e_poly = (e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0) / z_v_poly;
+        print!("q_e_poly: {:?}\n", q_e_poly);
+
+        // π2 = ([D]1 = [D(x)]1, [R]1 = [R(x)]1, [Q2]1 = [Q_D(x)]1)
+        d_comm_1 = Self::setup.commit_g1(&pp, &d_poly);
+        r_comm_1 = Self::setup.commit_g1(&pp, &r_poly);
+        q_d_comm_1 = Self::setup.commit_g1(&pp, &q_d_poly);
+        // π3 = ([E]1 = [E(x)]1, [Q1]1 = [Q_E(x)]1)
+        e_comm_1 = Self::setup.commit_g1(&pp, &e_poly);
+        q_e_comm_1 = Self::setup.commit_g1(&pp, &q_e_poly);
+
+        print!("d_comm_1: {:?}\n", d_comm_1);
+        print!("r_comm_1: {:?}\n", r_comm_1);
+        print!("q_d_comm_1: {:?}\n", q_d_comm_1);
+        print!("e_comm_1: {:?}\n", e_comm_1);
+        print!("q_e_comm_1: {:?}\n", q_e_comm_1);
+
+        self::z_V_poly = z_V_poly;
+        self::D_poly = D_poly;
+        self::E_poly = E_poly;
+        self::R_poly = R_poly;
+        self::Q_D_poly = Q_D_poly;
+        self::Q_E_poly = Q_E_poly;
+
+        // TODO
+        // return message2(d_comm_1, r_comm_1, q_d_comm_1, e_comm_1, q_e_comm_1);
     }
 }
