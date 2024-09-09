@@ -16,6 +16,8 @@ use std::{
     mem,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+use std::ops::{Div, DivAssign};
+use halo2_curves::ff::PrimeField;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnivariateBasis {
@@ -37,8 +39,8 @@ impl<F> Default for UnivariatePolynomial<F> {
 
 impl<F: Field> Additive<F> for UnivariatePolynomial<F> {
     fn msm<'a, 'b>(
-        scalars: impl IntoIterator<Item = &'a F>,
-        bases: impl IntoIterator<Item = &'b Self>,
+        scalars: impl IntoIterator<Item=&'a F>,
+        bases: impl IntoIterator<Item=&'b Self>,
     ) -> Self
     where
         Self: 'b,
@@ -59,7 +61,7 @@ impl<F> UnivariatePolynomial<F> {
         self.coeffs.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &F> {
+    pub fn iter(&self) -> impl Iterator<Item=&F> {
         self.coeffs.iter()
     }
 
@@ -131,7 +133,7 @@ impl<F: Field> UnivariatePolynomial<F> {
         }
     }
 
-    pub fn vanishing<'a>(points: impl IntoIterator<Item = &'a F>, scalar: F) -> Self {
+    pub fn vanishing<'a>(points: impl IntoIterator<Item=&'a F>, scalar: F) -> Self {
         let points = points.into_iter().collect_vec();
         assert!(!points.is_empty());
 
@@ -274,7 +276,7 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> AddAssign<P> for UnivariatePo
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> AddAssign<(BF, P)>
-    for UnivariatePolynomial<F>
+for UnivariatePolynomial<F>
 {
     fn add_assign(&mut self, (scalar, rhs): (BF, P)) {
         let (scalar, rhs) = (scalar.borrow(), rhs.borrow());
@@ -375,26 +377,26 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> SubAssign<P> for UnivariatePo
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> SubAssign<(BF, P)>
-    for UnivariatePolynomial<F>
+for UnivariatePolynomial<F>
 {
     fn sub_assign(&mut self, (scalar, rhs): (BF, P)) {
         *self += (-*scalar.borrow(), rhs);
     }
 }
 
-impl<F: Field, BF: Borrow<F>> Mul<BF> for &UnivariatePolynomial<F> {
+// using &F instead of Borrow<F> to avoid conflicts with Mul<Self>
+impl<F: Field> Mul<&F> for &UnivariatePolynomial<F> {
     type Output = UnivariatePolynomial<F>;
 
-    fn mul(self, rhs: BF) -> UnivariatePolynomial<F> {
+    fn mul(self, rhs: &F) -> UnivariatePolynomial<F> {
         let mut output = self.clone();
         output *= rhs;
         output
     }
 }
 
-impl<F: Field, BF: Borrow<F>> MulAssign<BF> for UnivariatePolynomial<F> {
-    fn mul_assign(&mut self, rhs: BF) {
-        let rhs = rhs.borrow();
+impl<F: Field> MulAssign<&F> for UnivariatePolynomial<F> {
+    fn mul_assign(&mut self, rhs: &F) {
         if rhs == &F::ZERO {
             match self.basis {
                 Monomial => self.coeffs.clear(),
@@ -410,8 +412,73 @@ impl<F: Field, BF: Borrow<F>> MulAssign<BF> for UnivariatePolynomial<F> {
     }
 }
 
+impl<F: Field> Mul for UnivariatePolynomial<F> {
+    type Output = UnivariatePolynomial<F>;
+
+    fn mul(mut self, rhs: UnivariatePolynomial<F>) -> UnivariatePolynomial<F> {
+        self *= &rhs;
+        self
+    }
+}
+
+impl<F: Field> MulAssign for UnivariatePolynomial<F> {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self *= &rhs;
+    }
+}
+
+impl<F: Field> Mul for &UnivariatePolynomial<F> {
+    type Output = UnivariatePolynomial<F>;
+
+    fn mul(self, rhs: &UnivariatePolynomial<F>) -> UnivariatePolynomial<F> {
+        let mut output = self.clone();
+        output *= rhs;
+        output
+    }
+}
+
+impl<F: Field> MulAssign<&Self> for UnivariatePolynomial<F> {
+    fn mul_assign(&mut self, rhs: &Self) {
+        if self.is_empty() || rhs.is_empty() {
+            *self = UnivariatePolynomial::zero();
+            return;
+        }
+
+        assert_eq!(self.basis, Monomial);
+        assert_eq!(rhs.basis, Monomial);
+
+        let mut result_coeffs = vec![F::ZERO; self.coeffs().len() + rhs.coeffs().len() - 1];
+
+        for (i, &self_coeff) in self.coeffs().iter().enumerate() {
+            for (j, &rhs_coeff) in rhs.coeffs().iter().enumerate() {
+                result_coeffs[i + j] += self_coeff * rhs_coeff;
+            }
+        }
+
+        self.coeffs = result_coeffs;
+    }
+}
+
+impl<F: Field> Div for &UnivariatePolynomial<F> {
+    type Output = UnivariatePolynomial<F>;
+
+    fn div(self, rhs: &UnivariatePolynomial<F>) -> Self::Output {
+        let mut output = self.clone();
+        output /= rhs;
+        output
+    }
+}
+
+impl<F: Field> DivAssign<&UnivariatePolynomial<F>> for UnivariatePolynomial<F> {
+    fn div_assign(&mut self, rhs: &UnivariatePolynomial<F>) {
+        let (quotient, remainder) = self.clone().div_rem(&rhs);
+        assert_eq!(remainder, UnivariatePolynomial::zero());
+        *self = quotient;
+    }
+}
+
 impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> Sum<P> for UnivariatePolynomial<F> {
-    fn sum<I: Iterator<Item = P>>(mut iter: I) -> UnivariatePolynomial<F> {
+    fn sum<I: Iterator<Item=P>>(mut iter: I) -> UnivariatePolynomial<F> {
         let init = match (iter.next(), iter.next()) {
             (Some(lhs), Some(rhs)) => lhs.borrow() + rhs.borrow(),
             (Some(lhs), None) => return lhs.borrow().clone(),
@@ -425,9 +492,9 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> Sum<P> for UnivariatePolynomi
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> Sum<(BF, P)>
-    for UnivariatePolynomial<F>
+for UnivariatePolynomial<F>
 {
-    fn sum<I: Iterator<Item = (BF, P)>>(mut iter: I) -> UnivariatePolynomial<F> {
+    fn sum<I: Iterator<Item=(BF, P)>>(mut iter: I) -> UnivariatePolynomial<F> {
         let init = match iter.next() {
             Some((scalar, poly)) => {
                 let mut poly = poly.borrow().clone();
@@ -444,3 +511,34 @@ impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> Sum<(BF, P)>
 }
 
 impl_index!(UnivariatePolynomial, coeffs);
+
+impl<F: PrimeField> From<Vec<u64>> for UnivariatePolynomial<F> {
+    fn from(nums: Vec<u64>) -> Self {
+        let coeffs = nums.iter().map(|&x| F::from(x)).collect();
+        UnivariatePolynomial::monomial(coeffs)
+    }
+}
+
+fn div<F: Field>(a: F, b: F) -> F {
+    a * b.invert().expect("Division by zero")
+}
+
+#[cfg(test)]
+mod tests {
+    use halo2_curves::bn256::Bn256;
+    use halo2_curves::pairing::Engine;
+    use super::*;
+    type Scalar = <Bn256 as Engine>::Scalar;
+
+    #[test]
+    fn test_mul_div() {
+        let p1 = UnivariatePolynomial::from(vec![1, 2, 3]);
+        let p2 = UnivariatePolynomial::from(vec![0, 0, 1, 2, 3]);
+        let p3 = &p1 * &p2;
+        let p4 = &p2 / &p1;
+
+        let test_point = Scalar::random(&mut rand::thread_rng());
+        assert_eq!(p1.evaluate(&test_point) * p2.evaluate(&test_point), p3.evaluate(&test_point));
+        assert_eq!(div(p2.evaluate(&test_point), p1.evaluate(&test_point)), p4.evaluate(&test_point));
+    }
+}
