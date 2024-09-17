@@ -8,6 +8,8 @@ use crate::{
         Deserialize, Itertools, Serialize,
     },
 };
+use halo2_curves::ff::PrimeField;
+use std::ops::{Div, DivAssign};
 use std::{
     borrow::Borrow,
     cmp::Ordering::{Equal, Greater, Less},
@@ -16,8 +18,6 @@ use std::{
     mem,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
-use std::ops::{Div, DivAssign};
-use halo2_curves::ff::PrimeField;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnivariateBasis {
@@ -384,6 +384,14 @@ for UnivariatePolynomial<F>
     }
 }
 
+impl<F: Field> Mul<F> for &UnivariatePolynomial<F> {
+    type Output = UnivariatePolynomial<F>;
+
+    fn mul(self, rhs: F) -> UnivariatePolynomial<F> {
+        self * &rhs
+    }
+}
+
 // using &F instead of Borrow<F> to avoid conflicts with Mul<Self>
 impl<F: Field> Mul<&F> for &UnivariatePolynomial<F> {
     type Output = UnivariatePolynomial<F>;
@@ -525,10 +533,22 @@ fn div<F: Field>(a: F, b: F) -> F {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use halo2_curves::bn256::Bn256;
     use halo2_curves::pairing::Engine;
-    use super::*;
     type Scalar = <Bn256 as Engine>::Scalar;
+
+    #[test]
+    fn test_scalar_mul() {
+        let p1 = UnivariatePolynomial::from(vec![1, 2, 3]);
+        let s = Scalar::random(&mut rand::thread_rng());
+        let p2 = &p1 * &s;
+        let p3 = &p1 * s;
+
+        let test_point = Scalar::random(&mut rand::thread_rng());
+        assert_eq!(p1.evaluate(&test_point) * s, p2.evaluate(&test_point));
+        assert_eq!(p1.evaluate(&test_point) * s, p3.evaluate(&test_point));
+    }
 
     #[test]
     fn test_mul_div() {
