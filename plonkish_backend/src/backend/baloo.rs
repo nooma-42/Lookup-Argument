@@ -380,25 +380,25 @@ mod tests {
             let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
             // Lagrange polynomial on V: μ_i(X)
             // z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
-            let mu_poly = z_v_poly.div_rem(&v_root_poly).0.mul(v_root * (Fr::from(m as u64).invert().unwrap()));
+            let mu_poly = &z_v_poly.div_rem(&v_root_poly).0 * (v_root * (Fr::from(m as u64).invert().unwrap()));
             // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
             // z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
-            let normalized_lag_poly = z_i_poly.div_rem(&x_root_poly).0.mul(col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let normalized_lag_poly = &z_i_poly.div_rem(&x_root_poly).0 * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
             // μ_i(α)
             let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
             // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
             let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
             // D(X) = Σ_i(μ_i(α) * normalized_lag_poly)
-            d_poly += normalized_lag_poly.mul(mu_poly_at_alpha);
+            d_poly += &normalized_lag_poly * mu_poly_at_alpha;
             // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
-            e_poly += mu_poly.mul(normalized_lag_poly_at_beta);
+            e_poly += &mu_poly * normalized_lag_poly_at_beta;
         }
         print!("d_poly: {:?}\n", d_poly);
         print!("e_poly: {:?}\n", e_poly);
 
         // TODO: polynomial multiplication
         // D(X) * t_I(X)
-        let d_t_poly = d_poly.mul(scalar_1); // d_poly.mul(t_i_poly);
+        let d_t_poly = &d_poly * scalar_1; // d_poly.mul(t_i_poly);
         // TODO: polynomial evaluation for lagrange polynomial
         // φ(α)
         let phi_poly_at_alpha = scalar_1; // phi_poly.evaluate(&alpha);
@@ -418,14 +418,14 @@ mod tests {
         let q_e_poly = {
             let beta_poly = UnivariatePolynomial::lagrange(vec![beta; m]);
             // beta - v_poly
-            let aaa: UnivariatePolynomial<Fr> = v_poly.mul(scalar_1.neg()).add(beta_poly);
+            let aaa: UnivariatePolynomial<Fr> = (&v_poly * scalar_1.neg()).add(beta_poly);
             // e_poly * (beta - v_poly)
             // TODO: polynomial multiplication
-            let bbb = e_poly.mul(scalar_1); // e_poly.mul(&aaa);
+            let bbb = &e_poly * scalar_1; // e_poly.mul(&aaa);
             // z_i_at_beta / z_i_at_0
             let ccc = z_i_at_beta.mul(z_i_at_0.invert().unwrap());
             // v_poly * z_i_at_beta / z_i_at_0
-            let ddd = v_poly.mul(ccc);
+            let ddd = &v_poly * ccc;
             // e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0
             // TODO: polynomial addition for monomial and lagrange polynomial
             //bbb.add(ddd)
