@@ -2,7 +2,7 @@ use crate::{
     pcs::Additive,
     poly::{univariate::UnivariateBasis::*, Polynomial},
     util::{
-        arithmetic::{div_ceil, horner, powers, Field},
+        arithmetic::{div_ceil, horner, powers, radix2_fft, root_of_unity, root_of_unity_inv, Field, WithSmallOrderMulGroup},
         impl_index, izip_eq,
         parallel::{num_threads, parallelize, parallelize_iter},
         Deserialize, Itertools, Serialize,
@@ -213,6 +213,37 @@ impl<F: Field> UnivariatePolynomial<F> {
                 .map(|num_zeros| self.coeffs.len() - num_zeros)
                 .unwrap_or_default(),
         );
+    }
+
+    fn poly_mul(&self, b: &UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
+    where
+        F: Field + WithSmallOrderMulGroup<3>
+    {
+        let n = self.coeffs.len() + b.coeffs.len() - 1;
+        let size = n.next_power_of_two();
+        let log_size = size.trailing_zeros() as usize;
+
+        let mut a_padded = self.coeffs.to_vec();
+        let mut b_padded = b.coeffs.to_vec();
+        a_padded.resize(size, F::ZERO);
+        b_padded.resize(size, F::ZERO);
+
+        let omega = root_of_unity(log_size);
+        let omega_inv = root_of_unity_inv(log_size);
+
+        radix2_fft(&mut a_padded, omega, log_size);
+        radix2_fft(&mut b_padded, omega, log_size);
+
+        let mut c = a_padded.iter().zip(b_padded.iter()).map(|(&x, &y)| x * y).collect::<Vec<_>>();
+
+        radix2_fft(&mut c, omega_inv, log_size);
+
+        let size_inv = F::from(size as u64).invert().unwrap();
+        c.iter_mut().for_each(|x| *x *= size_inv);
+        println!("c: {:?}", c);
+        c.truncate(n);
+        println!("c after truncate: {:?}", c);
+        UnivariatePolynomial::monomial(c)
     }
 }
 
@@ -534,7 +565,7 @@ fn div<F: Field>(a: F, b: F) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_curves::bn256::Bn256;
+    use halo2_curves::bn256::{Bn256, Fr};
     use halo2_curves::pairing::Engine;
     type Scalar = <Bn256 as Engine>::Scalar;
 
@@ -560,5 +591,19 @@ mod tests {
         let test_point = Scalar::random(&mut rand::thread_rng());
         assert_eq!(p1.evaluate(&test_point) * p2.evaluate(&test_point), p3.evaluate(&test_point));
         assert_eq!(div(p2.evaluate(&test_point), p1.evaluate(&test_point)), p4.evaluate(&test_point));
+    }
+
+    #[test]
+    fn test_mul_fft() {
+        let p1: UnivariatePolynomial<Fr> = UnivariatePolynomial::from(vec![1, 2, 3]);
+        let p2: UnivariatePolynomial<Fr> = UnivariatePolynomial::from(vec![0, 0, 1, 2, 3]);
+        assert_eq!(p1.evaluate(&Fr::from(1)), Fr::from(6));
+        assert_eq!(p1.evaluate(&Fr::from(2)), Fr::from(17));
+        assert_eq!(p2.evaluate(&Fr::from(1)), Fr::from(6));
+        assert_eq!(p2.evaluate(&Fr::from(2)), Fr::from(68));
+
+        let p3: UnivariatePolynomial<Fr> = &p1 * &p2;
+        let p4_fft: UnivariatePolynomial<Fr> = p1.poly_mul(&p2);
+        assert_eq!(p3, p4_fft);
     }
 }
