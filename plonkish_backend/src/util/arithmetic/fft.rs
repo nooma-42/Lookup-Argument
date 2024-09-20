@@ -119,3 +119,41 @@ fn recursive_butterfly_arithmetic<Scalar: Field, G: FftGroup<Scalar>>(
             });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use halo2_curves::bn256::Fr;
+    use rand::thread_rng;
+    use crate::util::arithmetic::{root_of_unity, root_of_unity_inv};
+
+    #[test]
+    fn test_radix2_fft() {
+        let n: u64 = 8;
+        let n_inv = Fr::from(n).invert().unwrap();
+        assert!(n_inv * Fr::from(n) == Fr::ONE);
+        let log_n = 3; // 2^3 = 8
+        // generate test data
+        let mut rng = thread_rng();
+        let mut data: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let original_data = data.clone();
+
+        // calculate appropriate unit root
+        let omega = root_of_unity(n as usize);
+        let omega_inv = root_of_unity_inv(n as usize);
+
+        // execute FFT
+        radix2_fft(&mut data, omega, log_n);
+        println!("fft result: {:?}", data);
+
+        // execute IFFT to convert fft result back to original data
+        radix2_fft(&mut data, omega_inv, log_n);
+        // divide by n to get ifft result
+        data.iter_mut().for_each(|data| *data *= n_inv);
+        println!("ifft result: {:?}", data);
+
+        assert_eq!(data, original_data);
+
+        println!("radix2_fft test passed");
+    }
+}
