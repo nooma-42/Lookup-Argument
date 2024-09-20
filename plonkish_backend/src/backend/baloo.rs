@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn test_round1() {
+    fn test_prover() {
         let lookup = vec![Fr::from(3), Fr::from(7), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
         let m = lookup.len();
