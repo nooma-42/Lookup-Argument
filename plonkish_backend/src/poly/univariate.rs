@@ -296,6 +296,24 @@ impl<F: Field> Neg for UnivariatePolynomial<F> {
     }
 }
 
+impl<F: Field> Add<F> for UnivariatePolynomial<F> {
+    type Output = UnivariatePolynomial<F>;
+
+    fn add(self, rhs: F) -> UnivariatePolynomial<F> {
+        let mut coeffs = self.coeffs;
+        match self.basis {
+            Monomial => {
+                coeffs[0] += rhs;
+                UnivariatePolynomial::monomial(coeffs)
+            },
+            Lagrange => {
+                coeffs.iter_mut().for_each(|coeff| *coeff += rhs);
+                UnivariatePolynomial::lagrange(coeffs)
+            },
+        }
+    }
+}
+
 impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> Add<P> for &UnivariatePolynomial<F> {
     type Output = UnivariatePolynomial<F>;
 
@@ -608,6 +626,21 @@ mod tests {
     use halo2_curves::bn256::{Bn256, Fr};
     use halo2_curves::pairing::Engine;
     type Scalar = <Bn256 as Engine>::Scalar;
+
+    #[test]
+    fn test_scalar_add() {
+        let p1 = UnivariatePolynomial::monomial(vec![Fr::from(1), Fr::from(2), Fr::from(3)]);
+        let s = Fr::from(3);
+        let p2 = p1.clone() + s;
+        assert_eq!(p2.coeffs(), &[Fr::from(4), Fr::from(2), Fr::from(3)]);
+        assert_eq!(p1.evaluate(&Fr::from(1)) + s, p2.evaluate(&Fr::from(1)));
+        assert_eq!(p1.evaluate(&Fr::from(2)) + s, p2.evaluate(&Fr::from(2)));
+        assert_eq!(p1.evaluate(&Fr::from(3)) + s, p2.evaluate(&Fr::from(3)));
+
+        let p3 = UnivariatePolynomial::lagrange(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+        let p4 = p3.clone() + s;
+        assert_eq!(p4.coeffs(), &[Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
+    }
 
     #[test]
     fn test_scalar_mul() {
