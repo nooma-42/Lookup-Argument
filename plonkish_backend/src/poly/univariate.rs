@@ -219,6 +219,8 @@ impl<F: Field> UnivariatePolynomial<F> {
     where
         F: Field + WithSmallOrderMulGroup<3>
     {
+        assert_eq!(self.basis, Monomial);
+        assert_eq!(rhs.basis, Monomial);
 
         let n = self.coeffs.len() + rhs.coeffs.len() - 1;
         let size = n.next_power_of_two();
