@@ -215,33 +215,34 @@ impl<F: Field> UnivariatePolynomial<F> {
         );
     }
 
-    pub fn poly_mul(&self, b: UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
+    pub fn poly_mul(&self, rhs: UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
     where
         F: Field + WithSmallOrderMulGroup<3>
     {
-        let n = self.coeffs.len() + b.coeffs.len() - 1;
+
+        let n = self.coeffs.len() + rhs.coeffs.len() - 1;
         let size = n.next_power_of_two();
         let log_size = size.trailing_zeros() as usize;
 
-        let mut a_padded = self.coeffs.to_vec();
-        let mut b_padded = b.coeffs.to_vec();
-        a_padded.resize(size, F::ZERO);
-        b_padded.resize(size, F::ZERO);
+        let mut self_padded = self.coeffs.to_vec();
+        let mut rhs_padded = rhs.coeffs.to_vec();
+        self_padded.resize(size, F::ZERO);
+        rhs_padded.resize(size, F::ZERO);
 
         let omega = root_of_unity(log_size);
         let omega_inv = root_of_unity_inv(log_size);
 
-        radix2_fft(&mut a_padded, omega, log_size);
-        radix2_fft(&mut b_padded, omega, log_size);
+        radix2_fft(&mut self_padded, omega, log_size);
+        radix2_fft(&mut rhs_padded, omega, log_size);
 
-        let mut c = a_padded.iter().zip(b_padded.iter()).map(|(&x, &y)| x * y).collect::<Vec<_>>();
+        let mut result = self_padded.iter().zip(rhs_padded.iter()).map(|(&x, &y)| x * y).collect::<Vec<_>>();
 
-        radix2_fft(&mut c, omega_inv, log_size);
+        radix2_fft(&mut result, omega_inv, log_size);
 
         let size_inv = F::from(size as u64).invert().unwrap();
-        c.iter_mut().for_each(|x| *x *= size_inv);
-        c.truncate(n);
-        UnivariatePolynomial::monomial(c)
+        result.iter_mut().for_each(|x| *x *= size_inv);
+        result.truncate(n);
+        UnivariatePolynomial::monomial(result)
     }
 }
 
