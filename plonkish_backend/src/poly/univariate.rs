@@ -246,6 +246,45 @@ impl<F: Field> UnivariatePolynomial<F> {
         result.truncate(n);
         UnivariatePolynomial::monomial(result)
     }
+
+    pub fn fft(&self) -> UnivariatePolynomial<F>
+    where
+        F: Field + WithSmallOrderMulGroup<3>
+    {
+        assert_eq!(self.basis, Monomial);
+
+        let mut result = self.coeffs.clone();
+        let n = result.len();
+        let size = n.next_power_of_two();
+        result.resize(size, F::ZERO);
+
+        let log_size = size.trailing_zeros() as usize;
+        let omega = root_of_unity(log_size);
+
+        radix2_fft(&mut result, omega, log_size);
+
+        UnivariatePolynomial::lagrange(result)
+    }
+
+    pub fn ifft(&self) -> UnivariatePolynomial<F>
+    where
+        F: Field + WithSmallOrderMulGroup<3>
+    {
+        assert_eq!(self.basis, Lagrange);
+        assert!(self.coeffs.len().is_power_of_two());
+
+        let mut result = self.coeffs.clone();
+        let size = result.len();
+        let log_size = size.trailing_zeros() as usize;
+        let size_inv = F::from(size as u64).invert().unwrap();
+        let omega_inv = root_of_unity_inv(log_size);
+
+        radix2_fft(&mut result, omega_inv, log_size);
+        result.iter_mut().for_each(|x| *x *= size_inv);
+        result.truncate(size);
+
+        UnivariatePolynomial::monomial(result)
+    }
 }
 
 impl<F: Field> Neg for UnivariatePolynomial<F> {
@@ -606,5 +645,26 @@ mod tests {
         let p3: UnivariatePolynomial<Fr> = &p1 * &p2;
         let p4_fft: UnivariatePolynomial<Fr> = p1.poly_mul(p2);
         assert_eq!(p3, p4_fft);
+    }
+
+    #[test]
+    fn test_fft_ifft() {
+        let p1: UnivariatePolynomial<Fr> = UnivariatePolynomial::from(vec![1, 2, 3]);
+        let p2 = p1.fft();
+        let p3 = p2.ifft();
+        assert_eq!(p1, p3);
+        assert_eq!(p1.coeffs().len(), 3);
+        // next power of 2
+        assert_eq!(p2.coeffs().len(), 4);
+        assert_eq!(p3.coeffs().len(), 3);
+
+        let p4: UnivariatePolynomial<Fr> = UnivariatePolynomial::from(vec![1, 2, 3, 4, 5]);
+        let p5 = p4.fft();
+        let p6 = p5.ifft();
+        assert_eq!(p4, p6);
+        assert_eq!(p4.coeffs().len(), 5);
+        // next power of 2
+        assert_eq!(p5.coeffs().len(), 8);
+        assert_eq!(p6.coeffs().len(), 5);
     }
 }
