@@ -398,7 +398,7 @@ mod tests {
 
         // TODO: polynomial multiplication
         // D(X) * t_I(X)
-        let d_t_poly = &d_poly * scalar_1; // d_poly.mul(t_i_poly);
+        let d_t_poly = d_poly.poly_mul(t_i_poly);
         // TODO: polynomial evaluation for lagrange polynomial
         // φ(α)
         let phi_poly_at_alpha = scalar_1; // phi_poly.evaluate(&alpha);
