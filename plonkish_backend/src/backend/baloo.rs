@@ -291,7 +291,7 @@ mod tests {
         // Commit and open
         let mut transcript = Keccak256Transcript::new(());
         // commit phi(X) on G1
-        let phi_poly = UnivariatePolynomial::lagrange(lookup.clone());
+        let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
         print!("coeffs: {:?}\n", phi_poly.coeffs());
         let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
 
@@ -332,7 +332,7 @@ mod tests {
             v_values.push(v);
         }
         // ξ(x) polynomial
-        let v_poly = UnivariatePolynomial::lagrange(v_values.clone());
+        let v_poly = UnivariatePolynomial::lagrange(v_values.clone()).ifft();
         let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         print!("v_comm_1: {:?}\n", v_comm_1);
 
@@ -401,14 +401,14 @@ mod tests {
         let d_t_poly = d_poly.poly_mul(t_i_poly);
         // TODO: polynomial evaluation for lagrange polynomial
         // φ(α)
-        let phi_poly_at_alpha = scalar_1; // phi_poly.evaluate(&alpha);
+        let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
         print!("d_t_poly: {:?}\n", d_t_poly);
         print!("phi_poly_at_alpha: {:?}\n", phi_poly_at_alpha);
 
         let constant_poly = UnivariatePolynomial::monomial(vec![phi_poly_at_alpha]);
 
         // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
-        let (q_d_poly, r_poly) = (d_t_poly.add(constant_poly)).div_rem(&z_i_poly);
+        let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
         print!("q_d_poly: {:?}\n", q_d_poly);
         print!("r_poly: {:?}\n", r_poly);
 
@@ -416,20 +416,19 @@ mod tests {
         // Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
         // (e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0) / z_v_poly;
         let q_e_poly = {
-            let beta_poly = UnivariatePolynomial::lagrange(vec![beta; m]);
+            // let beta_poly = UnivariatePolynomial::lagrange(vec![beta; m]);
             // beta - v_poly
-            let aaa: UnivariatePolynomial<Fr> = (&v_poly * scalar_1.neg()).add(beta_poly);
+            let aaa: UnivariatePolynomial<Fr> = &v_poly * scalar_1.neg() + beta;
             // e_poly * (beta - v_poly)
             // TODO: polynomial multiplication
-            let bbb = &e_poly * scalar_1; // e_poly.mul(&aaa);
+            let bbb = &e_poly.poly_mul(aaa);
             // z_i_at_beta / z_i_at_0
             let ccc = z_i_at_beta.mul(z_i_at_0.invert().unwrap());
             // v_poly * z_i_at_beta / z_i_at_0
             let ddd = &v_poly * ccc;
             // e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0
             // TODO: polynomial addition for monomial and lagrange polynomial
-            //bbb.add(ddd)
-            bbb
+            bbb + ddd
         };
         // e_poly.mul(aaa.add(v_poly.mul(z_i_at_beta.div(z_i_at_0)))).div(z_v_poly);
         print!("q_e_poly: {:?}\n", q_e_poly);
