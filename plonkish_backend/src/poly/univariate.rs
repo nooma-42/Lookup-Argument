@@ -215,7 +215,7 @@ impl<F: Field> UnivariatePolynomial<F> {
         );
     }
 
-    fn poly_mul(&self, b: &UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
+    pub fn poly_mul(&self, b: UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
     where
         F: Field + WithSmallOrderMulGroup<3>
     {
@@ -240,9 +240,7 @@ impl<F: Field> UnivariatePolynomial<F> {
 
         let size_inv = F::from(size as u64).invert().unwrap();
         c.iter_mut().for_each(|x| *x *= size_inv);
-        println!("c: {:?}", c);
         c.truncate(n);
-        println!("c after truncate: {:?}", c);
         UnivariatePolynomial::monomial(c)
     }
 }
@@ -603,7 +601,7 @@ mod tests {
         assert_eq!(p2.evaluate(&Fr::from(2)), Fr::from(68));
 
         let p3: UnivariatePolynomial<Fr> = &p1 * &p2;
-        let p4_fft: UnivariatePolynomial<Fr> = p1.poly_mul(&p2);
+        let p4_fft: UnivariatePolynomial<Fr> = p1.poly_mul(p2);
         assert_eq!(p3, p4_fft);
     }
 }
