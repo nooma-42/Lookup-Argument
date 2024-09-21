@@ -284,8 +284,11 @@ mod tests {
         let mut rng = OsRng;
         let poly_size = m;
         print!("poly_size: {:?}\n", poly_size);
-        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
-        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
+        // TODO: large srs size
+        let srs_size = 1 << 8;
+        print!("srs_size: {:?}\n", srs_size);
+        let param = Pcs::setup(srs_size, 1, &mut rng).unwrap();
+        let (pp, vp) = Pcs::trim(&param, srs_size, 1).unwrap();
         print!("lookup: {:?}\n", lookup);
 
         // Commit and open
@@ -370,7 +373,6 @@ mod tests {
         for i in 0..m {
             // col(i)
             let col_i = col_values[i];
-            let exp = vec![Fr::from(i as u64)];
             // ω^i
             let v_root = v_root_of_unity.pow([i as u64]);
             // X - ω^i
@@ -396,16 +398,12 @@ mod tests {
         print!("d_poly: {:?}\n", d_poly);
         print!("e_poly: {:?}\n", e_poly);
 
-        // TODO: polynomial multiplication
         // D(X) * t_I(X)
         let d_t_poly = d_poly.poly_mul(t_i_poly);
-        // TODO: polynomial evaluation for lagrange polynomial
         // φ(α)
         let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
         print!("d_t_poly: {:?}\n", d_t_poly);
         print!("phi_poly_at_alpha: {:?}\n", phi_poly_at_alpha);
-
-        let constant_poly = UnivariatePolynomial::monomial(vec![phi_poly_at_alpha]);
 
         // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
         let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
@@ -420,14 +418,12 @@ mod tests {
             // beta - v_poly
             let aaa: UnivariatePolynomial<Fr> = &v_poly * scalar_1.neg() + beta;
             // e_poly * (beta - v_poly)
-            // TODO: polynomial multiplication
             let bbb = &e_poly.poly_mul(aaa);
             // z_i_at_beta / z_i_at_0
             let ccc = z_i_at_beta.mul(z_i_at_0.invert().unwrap());
             // v_poly * z_i_at_beta / z_i_at_0
             let ddd = &v_poly * ccc;
             // e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0
-            // TODO: polynomial addition for monomial and lagrange polynomial
             bbb + ddd
         };
         // e_poly.mul(aaa.add(v_poly.mul(z_i_at_beta.div(z_i_at_0)))).div(z_v_poly);
