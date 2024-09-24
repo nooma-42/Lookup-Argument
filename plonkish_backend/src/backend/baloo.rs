@@ -121,7 +121,7 @@ impl<F: Field> Baloo<F>
             Pcs::verify(
                 &vp,
                 &Pcs::read_commitment(&vp, &mut transcript).unwrap(),
-                &<Pcs::Polynomial as Polynomial<F>>::squeeze_point(m, &mut transcript),
+                &<Pcs as PolynomialCommitmentScheme<F>>::Polynomial::squeeze_point(m, &mut transcript),
                 &transcript.read_field_element().unwrap(),
                 &mut transcript,
             )
@@ -185,6 +185,9 @@ impl<F: Field> Baloo<F>
 }
 
 fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> UnivariatePolynomial<Fr> {
+    assert!(h_i_values.len() == t_values_from_lookup.len());
+    println!("h_i_values: {:?}", h_i_values);
+
     let vanishing_poly = UnivariatePolynomial::vanishing(h_i_values, Fr::one());
     let mut bary_centric_weights = vec![Fr::one(); h_i_values.len()];
     let mut sum = UnivariatePolynomial::monomial(vec![Fr::zero()]);
@@ -211,6 +214,7 @@ mod tests {
     use std::{collections::HashSet, ops::{Add, Mul}};
     use bitvec::vec;
     use halo2_curves::bn256::Fr;
+    use num_integer::Roots;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
 
     type Pcs = UnivariateKzg<Bn256>;
@@ -276,8 +280,9 @@ mod tests {
 
     #[test]
     fn test_prover() {
-        let lookup = vec![Fr::from(3), Fr::from(7), Fr::from(3), Fr::from(4)];
-        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
+        let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
+        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+        // let m = 16;
         let m = lookup.len();
 
         // Setup
@@ -300,16 +305,26 @@ mod tests {
 
         // remove duplicated elements
         let t_values_from_lookup: HashSet<_> = lookup.clone().into_iter().collect();
+        print!("t_values_from_lookup: {:?}\n", t_values_from_lookup);
         // I: the index of t_values_from_lookup elements in sub table t_I
         let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
-        let root_of_unity = root_of_unity::<Fr>(m);
+        print!("i_values: {:?}\n", i_values);
+        // todo
+        let log_m = m.sqrt();
+        let v_root_of_unity = root_of_unity::<Fr>(log_m);
+        println!("v_root_of_unity: {:?}", v_root_of_unity);
+        assert_eq!(v_root_of_unity.pow([m as u64]), Fr::one());
+        for i in 1..m+1 {
+            println!("i: {:?}, v_root_of_unity^i: {:?}", i, v_root_of_unity.pow([i as u64]));
+        }
+
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
         let h_i: Vec<_> = i_values.iter().map(|&i| {
             let i_as_u64 = i as u64;
-            root_of_unity.pow(&[i_as_u64][..])
+            println!("i_as_u64: {:?}", i_as_u64);
+            v_root_of_unity.pow([i_as_u64])
         }).collect();
         print!("h_i: {:?}\n", h_i);
-        print!("t_values_from_lookup: {:?}\n", t_values_from_lookup);
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
         // refer to barycentric_weights in arithmetic.rs
         let t_values_vec: Vec<Fr> = t_values_from_lookup.iter().cloned().collect();
@@ -356,15 +371,17 @@ mod tests {
 
         let zero_poly = UnivariatePolynomial::monomial(vec![scalar_0]);
 
-        let v_root_of_unity = root_of_unity;
         // [-1, 0, 0, ..., 1], m - 1 0s in between
-        let z_v_values: Vec<Fr> = vec![scalar_1]
+        let z_v_values: Vec<Fr> = vec![scalar_1.neg()]
             .into_iter()
             .chain((0..m - 1).map(|_| scalar_0))
             .chain(vec![scalar_1])
             .collect();
+        assert_eq!(z_v_values.len(), m + 1);
         // X^m - 1
         let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
+        assert_eq!(z_v_poly.evaluate(&v_root_of_unity), scalar_0);
+
         // z_I(0)
         let z_i_at_0 = z_i_poly.evaluate(&scalar_0);
         // calculate D(X) = Σ_{0, m-1} μ_i(α) * τ^_{col(i)}(X)
@@ -375,17 +392,19 @@ mod tests {
             let col_i = col_values[i];
             // ω^i
             let v_root = v_root_of_unity.pow([i as u64]);
+            print!("v_root: {:?}\n", v_root);
             // X - ω^i
             let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
             // ξ_i
             let col_i_root = h_i[col_i];
+            // X - ξ_i
             let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
             // Lagrange polynomial on V: μ_i(X)
             // z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
-            let mu_poly = &z_v_poly.div_rem(&v_root_poly).0 * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            let mu_poly = &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
             // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
             // z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
-            let normalized_lag_poly = &z_i_poly.div_rem(&x_root_poly).0 * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let normalized_lag_poly = &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
             // μ_i(α)
             let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
             // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
@@ -399,7 +418,7 @@ mod tests {
         print!("e_poly: {:?}\n", e_poly);
 
         // D(X) * t_I(X)
-        let d_t_poly = d_poly.poly_mul(t_i_poly);
+        let d_t_poly = d_poly.poly_mul(t_i_poly.clone());
         // φ(α)
         let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
         print!("d_t_poly: {:?}\n", d_t_poly);
@@ -409,6 +428,7 @@ mod tests {
         let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
         print!("q_d_poly: {:?}\n", q_d_poly);
         print!("r_poly: {:?}\n", r_poly);
+        assert_eq!(r_poly.evaluate(&scalar_0), scalar_0);
 
         let z_i_at_beta = z_i_poly.evaluate(&beta);
         // Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
@@ -424,7 +444,7 @@ mod tests {
             // v_poly * z_i_at_beta / z_i_at_0
             let ddd = &v_poly * ccc;
             // e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0
-            bbb + ddd
+            &(bbb + ddd) / &z_v_poly
         };
         // e_poly.mul(aaa.add(v_poly.mul(z_i_at_beta.div(z_i_at_0)))).div(z_v_poly);
         print!("q_e_poly: {:?}\n", q_e_poly);
@@ -453,5 +473,99 @@ mod tests {
 
         // TODO
         // return message2(d_comm_1, r_comm_1, q_d_comm_1, e_comm_1, q_e_comm_1);
+
+        // round 3
+        let alpha = Fr::from(2 as u64);
+        let beta = Fr::from(3 as u64);
+        let gamma = Fr::from(4 as u64);
+        let zeta = Fr::from(5 as u64);
+
+        let d = srs_size - 2;
+        // calculate v1, v2, v3, v4, v5
+        // v1 = e(α)
+        let v1 = e_poly.evaluate(&alpha);
+        // v2 = a(α)
+        let v2 = phi_poly.evaluate(&alpha);
+        // v3 = z_I(0)
+        let v3 = z_i_at_0;
+        // v4 = z_I(β)
+        let v4 = z_i_poly.evaluate(&beta);
+        // v5 = e(ζ)
+        let v5 = e_poly.evaluate(&zeta);
+
+        // calculate D(β)
+        let d_beta = d_poly.evaluate(&beta);
+        // z_V(ζ)
+        let z_v_zeta = z_v_poly.evaluate(&zeta);
+        // beta - v_poly
+        let beta_sub_v_poly = &v_poly * scalar_1.neg() + beta;
+
+        // P_D(X) = D(β) * t_I(X) - φ(α) - R(X) - z_I(β) * Q_D(X)
+        let p_d_poly = &(&t_i_poly * d_beta + v2.neg()) - (&r_poly + &q_d_poly * v4);
+        // P_E(X) = E(ζ) * (β - v(X)) + v(X) * z_I(β) / z_I(0) - z_V(ζ) * Q_E(X)
+        let p_e_poly = &(&(&beta_sub_v_poly * v5) + &v_poly * (v4.mul(v3.invert().unwrap()))) - &q_e_poly * z_v_zeta;
+        // X^(d-m+1)
+        let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
+        // calculate [w1]1, [w2]1, [w2]1, [w4]1
+        // X - α
+        // todo: use fft to do division?
+        let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
+        // calculate w1 = (E(X) - e(α) + (φ(X) - a(α))γ) / X - α
+        let w1 = &(&(e_poly.clone() + v1.neg()) + &(phi_poly.clone() + v2.neg()) * gamma) / &x_alpha_poly;
+        // calculate polynomial X
+        let x_poly = UnivariatePolynomial::monomial(vec![scalar_0, scalar_1]);
+        // X^m
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        // calculate w2 = (z_I(X) - z_I(0) / X + γ * R(X) / X +  γ^2 * X^(d-m+1) * (z_I(X) - X^m)) + γ^3 * X^(d-m+1) * R(X)
+        // todo: use fft to do division?
+        let w2 = (
+                &(
+                    &(&(z_i_poly.clone() + v3.neg()) / &x_poly)
+                    + &(&(&r_poly * gamma) / &x_poly)
+                )
+                + &x_exponent_poly
+            ).poly_mul(
+                &(&(&z_i_poly - x_m_exponent_poly) * gamma.mul(gamma))
+                + &r_poly * gamma.mul(gamma).mul(gamma)
+            );
+        print!("w2: {:?}\n", w2.degree());
+        // let w2 = (z_I_poly - v3) / x_poly + R_poly * gamma / x_poly + x_exponent_poly * ( (z_I_poly - x_m_exponent_poly) * gamma ** 2 + R_poly * gamma ** 3 )
+        // calculate X - β
+        let x_beta_poly = UnivariatePolynomial::monomial(vec![-beta, scalar_1]);
+        // calculate w3 = (D(X) - E(α) + (z_I(X) - z_I(β))γ + P_D(X)γ^2) / X - β
+        // v1 = E(α) == D(β)
+        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly + v4.neg()) * gamma) + &p_d_poly * gamma.mul(gamma)) / &x_beta_poly;
+        // calculate X - ζ
+        let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
+        // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
+        // v5 = E(ζ)
+        // todo: use fft to do division?
+        let w4 = &(&(e_poly + v5.neg()) + &p_e_poly * gamma) / &x_zeta_poly;
+        // let w44 = &p_e_poly / &x_zeta_poly;
+        // let w4 = &(e_poly + v5.neg()) / &x_zeta_poly;
+
+        // calculate [w1]1, [w2]1, [w2]1, [w4]1
+        let w1_comm_1 = Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
+        let w2_comm_1 = Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
+        let w3_comm_1 = Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
+        let w4_comm_1 = Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
+
+        print!("w1_comm_1: {:?}\n", w1_comm_1);
+        print!("w2_comm_1: {:?}\n", w2_comm_1);
+        print!("w3_comm_1: {:?}\n", w3_comm_1);
+        print!("w4_comm_1: {:?}\n", w4_comm_1);
+
+        // todo: caulk+ calculate w5, w6
+        // w5_poly = (t_poly - t_I_poly) / z_I_poly
+        // w6_poly = z_H_poly / z_I_poly
+        // let w5_poly = &(&t_poly - &t_i_poly) / &z_i_poly;
+        // let w6_poly = &z_h_poly / &z_i_poly;
+
+        // let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
+        // let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
+
+        // print!("w5_comm_1: {:?}\n", w5_comm_1);
+        // print!("w6_comm_1: {:?}\n", w6_comm_1);
     }
 }
