@@ -176,6 +176,12 @@ impl<C: CurveAffine> Default for UnivariateKzgCommitment<C> {
     }
 }
 
+impl<C: CurveAffine> UnivariateKzgCommitment<C> {
+    pub fn to_affine(self) -> C {
+        self.0
+    }
+}
+
 impl<C: CurveAffine> PartialEq for UnivariateKzgCommitment<C> {
     fn eq(&self, other: &Self) -> bool {
         self.0.eq(&other.0)
