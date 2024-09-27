@@ -500,6 +500,8 @@ mod tests {
         let beta = Fr::from(3 as u64);
         let gamma = Fr::from(4 as u64);
         let zeta = Fr::from(5 as u64);
+        let gamma_2 = gamma.mul(gamma);
+        let gamma_3 = gamma_2.mul(gamma);
 
         let d = srs_size - 2;
         // calculate v1, v2, v3, v4, v5
@@ -539,17 +541,14 @@ mod tests {
         let x_poly = UnivariatePolynomial::monomial(vec![scalar_0, scalar_1]);
         // X^m
         let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
-        // calculate w2 = (z_I(X) - z_I(0) / X + γ * R(X) / X +  γ^2 * X^(d-m+1) * (z_I(X) - X^m)) + γ^3 * X^(d-m+1) * R(X)
+        // calculate w2 = (z_I(X) - v3 / X + γ * R(X) / X +  γ^2 * X^(d-m+1) * (z_I(X) - X^m)) + γ^3 * X^(d-m+1) * R(X)
         // todo: use fft to do division?
-        let w2 = (
-                &(
-                    &(&(z_i_poly.clone() + v3.neg()) / &x_poly)
-                    + &(&(&r_poly * gamma) / &x_poly)
-                )
-                + &x_exponent_poly
-            ).poly_mul(
-                &(&(&z_i_poly - x_m_exponent_poly) * gamma.mul(gamma))
-                + &r_poly * gamma.mul(gamma).mul(gamma)
+        let w2 = &(
+                &(&(z_i_poly.clone() + v3.neg()) / &x_poly)
+                + &(&(&r_poly * gamma) / &x_poly)
+            ) + &x_exponent_poly.poly_mul(
+                &(&(&z_i_poly - x_m_exponent_poly.clone()) * gamma_2)
+                + &r_poly * gamma_3
             );
         print!("w2: {:?}\n", w2.degree());
         // let w2 = (z_I_poly - v3) / x_poly + R_poly * gamma / x_poly + x_exponent_poly * ( (z_I_poly - x_m_exponent_poly) * gamma ** 2 + R_poly * gamma ** 3 )
@@ -557,7 +556,7 @@ mod tests {
         let x_beta_poly = UnivariatePolynomial::monomial(vec![-beta, scalar_1]);
         // calculate w3 = (D(X) - E(α) + (z_I(X) - z_I(β))γ + P_D(X)γ^2) / X - β
         // v1 = E(α) == D(β)
-        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly + v4.neg()) * gamma) + &p_d_poly * gamma.mul(gamma)) / &x_beta_poly;
+        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly + v4.neg()) * gamma) + &p_d_poly * gamma_2) / &x_beta_poly;
         // calculate X - ζ
         let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
         // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
@@ -625,6 +624,57 @@ mod tests {
         println!("Finished to verify: w1");
 
         // todo: 3. verify w2 for X = 0
+        // # X^(d-m+2)
+        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
+        let x_exponent_poly_2_comm_1 = Pcs::commit_and_write(&pp, &x_exponent_poly_2, &mut transcript).unwrap();
+        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
+        // X^m
+        let x_m_exponent_poly_comm_1 = Pcs::commit_and_write(&pp, &x_m_exponent_poly.clone(), &mut transcript).unwrap();
+        // to affine
+        let x_exponent_poly_2_comm_1_affine = x_exponent_poly_2_comm_1.to_affine();
+        let x_exponent_poly_2_comm_2_affine = x_exponent_poly_2_comm_2.to_affine();
+        let x_m_exponent_poly_comm_1_affine = x_m_exponent_poly_comm_1.to_affine();
+        let z_i_comm_2_affine = z_i_comm_2.to_affine();
+        let r_comm_1_affine = r_comm_1.to_affine();
+        let w2_comm_1_affine: G1Affine = w2_comm_1.to_affine();
+
+        // w2_rhs1 = ec_lincomb([
+        //     (b.G1, scalar_one),
+        //     (x_exp_poly_2_comm_1, gamma ** 2),
+        // ])
+        let w2_rhs1 = variable_base_msm(
+            &[gamma_2, scalar_1],
+            &[x_exponent_poly_2_comm_1_affine.clone(), g1_affine.clone()]
+        ).into();
+
+        // w2_rhs2 = ec_lincomb([
+        //     (R_comm_1, gamma ** 3),
+        //     (x_m_exp_poly_comm_1, -gamma ** 2),
+        // ])
+        let w2_rhs2 = variable_base_msm(
+            &[gamma_3, -gamma_2],
+            &[r_comm_1_affine.clone(), x_m_exponent_poly_comm_1_affine.clone()],
+        ).into();
+
+        // w2_rhs3 = ec_lincomb([
+        //     (R_comm_1, gamma),
+        //     (b.G1, -v3),
+        // ])
+        let w2_rhs3 = variable_base_msm(
+            &[gamma, -v3],
+            &[r_comm_1_affine.clone(), g1_affine.clone()]
+        ).into();
+        // assert b.pairing(x2, w2_comm_1) == b.pairing(z_I_comm_2, w2_rhs1) * b.pairing(
+        //     x_exp_poly_2_comm_2, w2_rhs2) * b.pairing(b.G2, w2_rhs3), "w2 paring check failed"
+        // print("Finished to verify: w2")
+
+        let lhs = pairing(&w2_comm_1_affine, &vp.s_g2());
+        let w2_pairing_g1_terms = vec![w2_rhs1, w2_rhs2, w2_rhs3];
+        let w2_pairing_g2_terms = vec![z_i_comm_2_affine.clone(), x_exponent_poly_2_comm_2_affine.clone(), g2_affine.clone()];
+        let rhs = multi_pairing(&w2_pairing_g1_terms, &w2_pairing_g2_terms);
+        assert_eq!(lhs, rhs);
+        println!("Finished to verify: w2");
         // todo: 4. verify w3 for X = β
         // calculate commitment [P_D(X)]1
         // P_D_comm_1 = ec_lincomb([
