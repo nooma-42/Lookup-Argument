@@ -595,7 +595,7 @@ mod tests {
         let g1_affine = G1Affine::from(g1);
         let g2_affine = G2Affine::from(g2);
         // todo: 1. verify subtable
-        // todo: 2. verify w1 for X = α
+        // 2. verify w1 for X = α
         // # w1 = X^(d-m+1) * (E(X) - e(α) + (φ(X) - a(α))γ) / X - α
         // let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
         // let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
@@ -623,7 +623,7 @@ mod tests {
 
         println!("Finished to verify: w1");
 
-        // todo: 3. verify w2 for X = 0
+        // 3. verify w2 for X = 0
         // # X^(d-m+2)
         let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
         let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(w2_lhs, rhs);
         println!("Finished to verify: w2");
 
-        // todo: 4. verify w3 for X = β
+        // 4. verify w3 for X = β
         let w3_comm_1_affine: G1Affine = w3_comm_1.to_affine();
         // # calculate commitment [P_D(X)]1
         let p_d_comm_1_affine: G1Affine = variable_base_msm(
@@ -699,8 +699,20 @@ mod tests {
         assert_eq!(w3_lhs, w3_rhs);
         println!("Finished to verify: w3");
 
-        // todo: 5. verify w4 for X = ζ
-
+        // 5. verify w4 for X = ζ
+        let p_e_comm_1_affine: G1Affine = variable_base_msm(
+            &[v5.mul(beta), -v5 + v4 * v3.invert().unwrap(), -z_v_zeta],
+            &[g1_affine.clone(), v_comm_1.clone().to_affine(), q_e_comm_1.clone().to_affine()]
+        ).into();
+        let w4_comm_1_affine: G1Affine = w4_comm_1.to_affine();
+        let w4_msm_rhs = variable_base_msm(
+            &[scalar_1, zeta, gamma, -v5],
+            &[e_comm_1.clone().to_affine(), w4_comm_1_affine.clone(), p_e_comm_1_affine.clone(), g1_affine.clone()]
+        ).into();
+        let w4_pairing_lhs = pairing(&w4_comm_1_affine, &vp.s_g2());
+        let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
+        assert_eq!(w4_pairing_lhs, w4_pairing_rhs);
+        println!("Finished to verify: w4");
     }
 
     #[test]
