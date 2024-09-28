@@ -305,6 +305,7 @@ mod tests {
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         // let m = 16;
         let m = lookup.len();
+        let t = table.len();
 
         // Setup
         let mut rng = OsRng;
@@ -348,11 +349,14 @@ mod tests {
         print!("h_i: {:?}\n", h_i);
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
         // refer to barycentric_weights in arithmetic.rs
-        let t_values_vec: Vec<Fr> = t_values_from_lookup.iter().cloned().collect();
-        let t_i_poly = lagrange_interp(&h_i, &t_values_vec);
-        let t_commit_1 = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
+        let t_values_from_lookup_set : Vec<Fr>= t_values_from_lookup.clone().into_iter().collect();
+        print!("t_values_from_lookup_set: {:?}\n", t_values_from_lookup_set);
+        let t_i_poly = lagrange_interp(&h_i, &t_values_from_lookup_set);
 
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
+        assert_eq!(z_i_poly.evaluate(&h_i[0]), Fr::zero());
+        assert_eq!(z_i_poly.evaluate(&h_i[1]), Fr::zero());
+        assert_eq!(z_i_poly.evaluate(&h_i[2]), Fr::zero());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         // TODO
         // transcript.write_commitments(&z_i_comm_2.0.x.c0).unwrap();
@@ -556,7 +560,7 @@ mod tests {
         let x_beta_poly = UnivariatePolynomial::monomial(vec![-beta, scalar_1]);
         // calculate w3 = (D(X) - E(α) + (z_I(X) - z_I(β))γ + P_D(X)γ^2) / X - β
         // v1 = E(α) == D(β)
-        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly + v4.neg()) * gamma) + &p_d_poly * gamma_2) / &x_beta_poly;
+        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly.clone() + v4.neg()) * gamma) + &p_d_poly * gamma_2) / &x_beta_poly;
         // calculate X - ζ
         let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
         // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
@@ -578,14 +582,23 @@ mod tests {
         print!("w4_comm_1: {:?}\n", w4_comm_1);
 
         // todo: caulk+ calculate w5, w6
+        let t_poly = UnivariatePolynomial::lagrange(table).ifft();
+        assert_eq!(t_poly.evaluate(&scalar_1), Fr::from(1 as u64));
+        assert_eq!(t_poly.evaluate(&v_root_of_unity), Fr::from(2 as u64));
+        assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([2 as u64])), Fr::from(3 as u64));
+        assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([3 as u64])), Fr::from(4 as u64));
+        let t_comm_1 = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
+        // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
+        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
+        let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
+        let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
         // w6_poly = z_H_poly / z_I_poly
-        // let w5_poly = &(&t_poly - &t_i_poly) / &z_i_poly;
-        // let w6_poly = &z_h_poly / &z_i_poly;
+        let w5_poly = &(&t_poly - &t_i_poly) / &z_i_poly;
+        let w6_poly = &z_h_poly / &z_i_poly;
 
-        // let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
-        // let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
-
+        let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
+        let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
         // print!("w5_comm_1: {:?}\n", w5_comm_1);
         // print!("w6_comm_1: {:?}\n", w6_comm_1);
 
@@ -594,7 +607,30 @@ mod tests {
         let g2 = G2::generator();
         let g1_affine = G1Affine::from(g1);
         let g2_affine = G2Affine::from(g2);
+        let z_i_comm_2_affine = z_i_comm_2.to_affine();
         // todo: 1. verify subtable
+        // subtable_lhs = ec_lincomb([
+        //     (t_comm_1, scalar_one),
+        //     (t_I_comm_1, -scalar_one),
+        //     (z_H_comm_1, gamma),
+        // ])
+        // subtable_rhs = ec_lincomb([
+        //     (w5_comm_1, scalar_one),
+        //     (w6_comm_1, gamma),
+        // ])
+        let subtable_msm_lhs = variable_base_msm(
+            &[scalar_1, -scalar_1, gamma],
+            &[t_comm_1.clone().to_affine(), t_i_comm_1.clone().to_affine(), z_h_comm_1.clone().to_affine()]
+        ).into();
+        let subtable_msm_rhs = variable_base_msm(
+            &[scalar_1, gamma],
+            &[w5_comm_1.clone().to_affine(), w6_comm_1.clone().to_affine()]
+        ).into();
+        let subtable_pairing_lhs = pairing(&subtable_msm_lhs, &g2_affine.clone());
+        let subtable_pairing_rhs = pairing(&subtable_msm_rhs, &z_i_comm_2_affine.clone());
+        assert_eq!(subtable_pairing_lhs, subtable_pairing_rhs);
+        println!("Finished to verify: subtable");
+
         // 2. verify w1 for X = α
         // # w1 = X^(d-m+1) * (E(X) - e(α) + (φ(X) - a(α))γ) / X - α
         // let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
@@ -635,7 +671,6 @@ mod tests {
         let x_exponent_poly_2_comm_1_affine = x_exponent_poly_2_comm_1.to_affine();
         let x_exponent_poly_2_comm_2_affine = x_exponent_poly_2_comm_2.to_affine();
         let x_m_exponent_poly_comm_1_affine = x_m_exponent_poly_comm_1.to_affine();
-        let z_i_comm_2_affine = z_i_comm_2.to_affine();
         let r_comm_1_affine = r_comm_1.to_affine();
         let w2_comm_1_affine: G1Affine = w2_comm_1.to_affine();
 
