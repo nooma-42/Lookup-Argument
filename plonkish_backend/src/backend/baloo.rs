@@ -602,7 +602,7 @@ mod tests {
         let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
         let w1_comm_1_affine: G1Affine = w1_comm_1.to_affine();
         // calculate left hand side pairing
-        let lhs = pairing(&w1_comm_1_affine, &vp.s_g2());
+        let w1_lhs = pairing(&w1_comm_1_affine, &vp.s_g2());
         // calculate right hand side pairing
         let w1_rhs1: G1Affine = variable_base_msm(
             &[scalar_1, -v1, gamma, -gamma.mul(v2)],
@@ -617,9 +617,9 @@ mod tests {
         assert_eq!(vp.g2(), g2_affine);
         let g1_terms = vec![w1_rhs1, w1_rhs2];
         let g2_terms = vec![x_exponent_poly_comm_2_affine, g2_affine];
-        let rhs = multi_pairing(&g1_terms, &g2_terms);
+        let w1_rhs = multi_pairing(&g1_terms, &g2_terms);
 
-        assert_eq!(lhs, rhs);
+        assert_eq!(w1_lhs, w1_rhs);
 
         println!("Finished to verify: w1");
 
@@ -669,32 +669,35 @@ mod tests {
         //     x_exp_poly_2_comm_2, w2_rhs2) * b.pairing(b.G2, w2_rhs3), "w2 paring check failed"
         // print("Finished to verify: w2")
 
-        let lhs = pairing(&w2_comm_1_affine, &vp.s_g2());
+        let w2_lhs = pairing(&w2_comm_1_affine, &vp.s_g2());
         let w2_pairing_g1_terms = vec![w2_rhs1, w2_rhs2, w2_rhs3];
         let w2_pairing_g2_terms = vec![z_i_comm_2_affine.clone(), x_exponent_poly_2_comm_2_affine.clone(), g2_affine.clone()];
         let rhs = multi_pairing(&w2_pairing_g1_terms, &w2_pairing_g2_terms);
-        assert_eq!(lhs, rhs);
+        assert_eq!(w2_lhs, rhs);
         println!("Finished to verify: w2");
+
         // todo: 4. verify w3 for X = β
-        // calculate commitment [P_D(X)]1
-        // P_D_comm_1 = ec_lincomb([
-        //     (t_I_comm_1, v1),
-        //     (b.G1, -v2),
-        //     (R_comm_1, -scalar_one),
-        //     (Q_D_comm_1, -v4),
-        // ])
+        let w3_comm_1_affine: G1Affine = w3_comm_1.to_affine();
+        // # calculate commitment [P_D(X)]1
+        let p_d_comm_1_affine: G1Affine = variable_base_msm(
+            &[v1, -v2, -scalar_1, -v4],
+            &[t_i_comm_1.clone().to_affine(), g1_affine.clone(), r_comm_1_affine.clone(), q_d_comm_1.clone().to_affine()]
+        ).into();
+        let w3_rhs1 = variable_base_msm(
+            &[scalar_1, beta, -v1 - gamma.mul(v4), gamma_2],
+            &[d_comm_1.clone().to_affine(), w3_comm_1_affine.clone(), g1_affine.clone(), p_d_comm_1_affine.clone()]
+        ).into();
+        let w3_rhs2 = variable_base_msm(
+            &[gamma],
+            &[g1_affine.clone()]
+        ).into();
 
-        // X^m - 1
-        // let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
-        // let z_v_zeta = z_v_poly.evaluate(&zeta);
-
-        // # calculate commitment [P_E(X)]1
-        // P_E_comm_1 = ec_lincomb([
-        //     (b.G1, v5 * beta),
-        //     (v_comm_1, -v5),
-        //     (v_comm_1, v4 / v3),
-        //     (Q_E_comm_1, -z_V_poly_at_zeta),
-        // ])
+        let w3_lhs = pairing(&w3_comm_1_affine, &vp.s_g2());
+        let w3_pairing_g1_terms = vec![w3_rhs1, w3_rhs2];
+        let w3_pairing_g2_terms = vec![g2_affine.clone(), z_i_comm_2_affine.clone()];
+        let w3_rhs = multi_pairing(&w3_pairing_g1_terms, &w3_pairing_g2_terms);
+        assert_eq!(w3_lhs, w3_rhs);
+        println!("Finished to verify: w3");
 
         // todo: 5. verify w4 for X = ζ
 
