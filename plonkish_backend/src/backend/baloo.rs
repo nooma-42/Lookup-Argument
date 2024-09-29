@@ -223,7 +223,6 @@ pub fn multi_pairing(g1: &[G1Affine], g2: &[G2Affine]) -> Gt {
 mod tests {
     use super::*;
     use std::{collections::HashSet, ops::{Add, Mul}};
-    use bitvec::vec;
     use halo2_curves::{bn256::Fr, pairing::MillerLoopResult};
     use num_integer::Roots;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
@@ -291,6 +290,56 @@ mod tests {
     }
 
     #[test]
+    fn test_transcript() {
+        let lookup = vec![Fr::one(), Fr::one()];
+        let table = vec![Fr::one(), Fr::from(2)];
+        let m = lookup.len();
+        let poly = UnivariatePolynomial::monomial(lookup.clone());
+        let poly_table = UnivariatePolynomial::monomial(table.clone());
+        // Setup
+        let (pp, vp) = {
+            let mut rng = OsRng;
+            let poly_size = m;
+            print!("poly_size: {:?}\n", poly_size);
+            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+            Pcs::trim(&param, poly_size, 1).unwrap()
+        };
+
+        let mut transcript = Keccak256Transcript::new(());
+        transcript.write_field_element(&Fr::from(1 as u64)).unwrap();
+        transcript.write_field_element(&Fr::from(2 as u64)).unwrap();
+        transcript.write_field_element(&Fr::from(3 as u64)).unwrap();
+
+        let comm = <Pcs as PolynomialCommitmentScheme<Fr>>::commit(&pp, &poly).unwrap();
+        println!("comm: {:?}", comm);
+        println!("comm affine: {:?}", comm.clone().to_affine());
+        transcript.write_commitment(&comm.clone().to_affine()).unwrap();
+
+        let comm_table = Pcs::commit_and_write(&pp, &poly_table, &mut transcript).unwrap();
+        println!("comm_table: {:?}", comm_table);
+
+        let proof = transcript.into_proof();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+
+        let a: Fr = transcript.read_field_element().unwrap();
+        println!("a: {:?}", a);
+        assert_eq!(a, Fr::from(1 as u64));
+        let b: Fr = transcript.read_field_element().unwrap();
+        println!("b: {:?}", b);
+        assert_eq!(b, Fr::from(2 as u64));
+        let c: Fr = transcript.read_field_element().unwrap();
+        println!("c: {:?}", c);
+        assert_eq!(c, Fr::from(3 as u64));
+
+        let comm_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("comm_back: {:?}", comm_back);
+        let comm_table_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("comm_table_back: {:?}", comm_table_back);
+        assert_eq!(comm, comm_back);
+        assert_eq!(comm_table, comm_table_back);
+    }
+
+    #[test]
     fn test_e2e() {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
@@ -322,14 +371,8 @@ mod tests {
         // I: the index of t_values_from_lookup elements in sub table t_I
         let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
         print!("i_values: {:?}\n", i_values);
-        // todo
         let log_m = m.sqrt();
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
-        println!("v_root_of_unity: {:?}", v_root_of_unity);
-        assert_eq!(v_root_of_unity.pow([m as u64]), Fr::one());
-        for i in 1..m+1 {
-            println!("i: {:?}, v_root_of_unity^i: {:?}", i, v_root_of_unity.pow([i as u64]));
-        }
 
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
         let h_i: Vec<_> = i_values.iter().map(|&i| {
@@ -627,6 +670,7 @@ mod tests {
         // let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
         // let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
         let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
+        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
         let w1_comm_1_affine: G1Affine = w1_comm_1.to_affine();
         // calculate left hand side pairing
         let w1_lhs = pairing(&w1_comm_1_affine, &vp.s_g2());
