@@ -41,16 +41,16 @@ impl<M: MultiMillerLoop> UnivariateKzg<M> {
         param: &UnivariateKzgParam<M>,
         coeffs: &[M::Scalar],
     ) -> UnivariateKzgCommitment<M::G2Affine> {
-        let comm = variable_base_msm(coeffs, &param.powers_of_s_g2[..coeffs.len()]);
-        UnivariateKzgCommitment(comm.into())
+        let comm = variable_base_msm(coeffs, &param.powers_of_s_g2[..coeffs.len()]).into();
+        UnivariateKzgCommitment(comm)
     }
 
     pub(crate) fn commit_lagrange_g2(
         param: &UnivariateKzgParam<M>,
         evals: &[M::Scalar],
     ) -> UnivariateKzgCommitment<M::G2Affine> {
-        let comm = variable_base_msm(evals, &param.powers_of_s_g2[..evals.len()]);
-        UnivariateKzgCommitment(comm.into())
+        let comm = variable_base_msm(evals, &param.powers_of_s_g2[..evals.len()]).into();
+        UnivariateKzgCommitment(comm)
     }
 
     // fn commit_g2(param: &UnivariateKzgParam<M>, poly: &<Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial) -> Result<<Pcs as PolynomialCommitmentScheme<Fr>>::Commitment, Error> {
