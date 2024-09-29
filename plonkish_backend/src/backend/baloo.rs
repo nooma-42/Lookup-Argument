@@ -224,7 +224,7 @@ mod tests {
     use super::*;
     use std::{collections::HashSet, ops::{Add, Mul}};
     use bitvec::vec;
-    use halo2_curves::{bn256::{Fr, G2Prepared}, pairing::MillerLoopResult};
+    use halo2_curves::{bn256::Fr, pairing::MillerLoopResult};
     use num_integer::Roots;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
 
@@ -291,16 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_verify() {
-        // let w1_rhs1 = variable_base_msm(
-        //     &[Fr::one(), Fr::one()],
-        //     &[&e_comm_1, &phi_comm_1]
-        // );
-        // print!("w1_rhs1: {:?}\n", w1_rhs1);
-    }
-
-    #[test]
-    fn test_prover() {
+    fn test_e2e() {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         // let m = 16;
@@ -751,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_pairing() {
+    fn test_multi_pairing_only_g2() {
         let mut rng = OsRng;
         let g1 = G1::generator();
         let g2 = G2::generator();
@@ -786,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_pairing_2() {
+    fn test_multi_pairing_with_s_g2() {
         let mut rng = OsRng;
         let g1 = G1::generator();
         let g2 = G2::generator();
