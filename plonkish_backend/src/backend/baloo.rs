@@ -404,8 +404,7 @@ mod tests {
         assert_eq!(z_i_poly.evaluate(&h_i[1]), Fr::zero());
         assert_eq!(z_i_poly.evaluate(&h_i[2]), Fr::zero());
         let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
-        // TODO
-        // transcript.write_commitments(&z_i_comm_2.0.x.c0).unwrap();
+        transcript.write_commitment_g2(&z_i_comm_2.clone().to_affine()).unwrap();
         print!("z_i_comm_2: {:?}\n", z_i_comm_2);
 
         let mut col_values = Vec::new();
@@ -654,7 +653,7 @@ mod tests {
         let g1_affine = G1Affine::from(g1);
         let g2_affine = G2Affine::from(g2);
         let z_i_comm_2_affine = z_i_comm_2.to_affine();
-        // todo: 1. verify subtable
+        // 1. verify subtable
         // subtable_lhs = ec_lincomb([
         //     (t_comm_1, scalar_one),
         //     (t_I_comm_1, -scalar_one),
