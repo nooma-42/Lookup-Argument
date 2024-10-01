@@ -223,10 +223,9 @@ pub fn multi_pairing(g1: &[G1Affine], g2: &[G2Affine]) -> Gt {
 mod tests {
     use super::*;
     use std::{collections::HashSet, ops::{Add, Mul}};
-    use halo2_curves::{bn256::Fr, pairing::MillerLoopResult};
+    use halo2_curves::bn256::Fr;
     use num_integer::Roots;
-    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
-
+    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
@@ -297,13 +296,11 @@ mod tests {
         let poly = UnivariatePolynomial::monomial(lookup.clone());
         let poly_table = UnivariatePolynomial::monomial(table.clone());
         // Setup
-        let (pp, vp) = {
-            let mut rng = OsRng;
-            let poly_size = m;
-            print!("poly_size: {:?}\n", poly_size);
-            let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
-            Pcs::trim(&param, poly_size, 1).unwrap()
-        };
+        let mut rng = OsRng;
+        let poly_size = m;
+        print!("poly_size: {:?}\n", poly_size);
+        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
 
         let mut transcript = Keccak256Transcript::new(());
         transcript.write_field_element(&Fr::from(1 as u64)).unwrap();
@@ -314,6 +311,15 @@ mod tests {
         println!("comm: {:?}", comm);
         println!("comm affine: {:?}", comm.clone().to_affine());
         transcript.write_commitment(&comm.clone().to_affine()).unwrap();
+        let comm_1 = Pcs::commit_monomial(&pp, &poly.coeffs());
+        println!("comm_1: {:?}", comm_1);
+        assert_eq!(comm_1, comm);
+
+        // g2
+        let comm_2 = Pcs::commit_monomial_g2(&param, &poly.coeffs());
+        println!("comm_2: {:?}", comm_2);
+        let comm_2_affine = comm_2.clone().to_affine();
+        transcript.write_commitment_g2(&comm_2_affine).unwrap();
 
         let comm_table = Pcs::commit_and_write(&pp, &poly_table, &mut transcript).unwrap();
         println!("comm_table: {:?}", comm_table);
@@ -333,10 +339,16 @@ mod tests {
 
         let comm_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("comm_back: {:?}", comm_back);
+
+        // g2
+        let comm_table_g2: G2Affine = transcript.read_commitment_g2().unwrap();
+        println!("comm_table_g2: {:?}", comm_table_g2);
+
         let comm_table_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("comm_table_back: {:?}", comm_table_back);
         assert_eq!(comm, comm_back);
         assert_eq!(comm_table, comm_table_back);
+        assert_eq!(comm_2.to_affine(), comm_table_g2);
     }
 
     #[test]
