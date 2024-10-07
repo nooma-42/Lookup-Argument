@@ -224,7 +224,7 @@ mod tests {
     use std::{collections::HashSet, ops::{Add, Mul}};
     use halo2_curves::bn256::Fr;
     use num_integer::Roots;
-    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
+    use crate::util::transcript::{FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
@@ -424,9 +424,8 @@ mod tests {
         print!("v_comm_1: {:?}\n", v_comm_1);
 
         // round 2
-        // TODO: get randomness from transcript
-        let alpha = Fr::from(2 as u64);
-        let beta = Fr::from(3 as u64);
+        let alpha = transcript.squeeze_challenge();
+        let beta = transcript.squeeze_challenge();
         // let z_i_poly = self::z_i_poly.clone();
         // let v_poly = self::v_poly.clone();
         // let t_i_poly = self::t_i_poly.clone();
@@ -544,10 +543,8 @@ mod tests {
         // return message2(d_comm_1, r_comm_1, q_d_comm_1, e_comm_1, q_e_comm_1);
 
         // round 3
-        let alpha = Fr::from(2 as u64);
-        let beta = Fr::from(3 as u64);
-        let gamma = Fr::from(4 as u64);
-        let zeta = Fr::from(5 as u64);
+        let gamma: Fr = transcript.squeeze_challenge();
+        let zeta: Fr = transcript.squeeze_challenge();
         let gamma_2 = gamma.mul(gamma);
         let gamma_3 = gamma_2.mul(gamma);
 
@@ -580,7 +577,6 @@ mod tests {
         let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
         // calculate [w1]1, [w2]1, [w2]1, [w4]1
         // X - α
-        // todo: use fft to do division?
         let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
         // calculate w1 = X^(d-m+1) * (E(X) - E(α) + (φ(X) - φ(α))γ) / X - α
         let mut w1 = &(&(e_poly.clone() + v1.neg()) + &(phi_poly.clone() + v2.neg()) * gamma) / &x_alpha_poly;
@@ -590,7 +586,6 @@ mod tests {
         // X^m
         let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
         // calculate w2 = (z_I(X) - v3 / X + γ * R(X) / X +  γ^2 * X^(d-m+1) * (z_I(X) - X^m)) + γ^3 * X^(d-m+1) * R(X)
-        // todo: use fft to do division?
         let w2 = &(
                 &(&(z_i_poly.clone() + v3.neg()) / &x_poly)
                 + &(&(&r_poly * gamma) / &x_poly)
@@ -625,7 +620,7 @@ mod tests {
         print!("w3_comm_1: {:?}\n", w3_comm_1);
         print!("w4_comm_1: {:?}\n", w4_comm_1);
 
-        // todo: caulk+ calculate w5, w6
+        // caulk+ calculate w5, w6
         let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
         assert_eq!(t_poly.evaluate(&scalar_1), Fr::from(1 as u64));
         assert_eq!(t_poly.evaluate(&v_root_of_unity), Fr::from(2 as u64));
@@ -644,6 +639,7 @@ mod tests {
 
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
         let w5_poly_direct = &(&t_poly - &t_i_poly) / &z_i_poly;
+        // todo: move this calculation to common inputs
         // q_t_poly_i = (t_poly - table[i])/X-root_of_unity^i
         let q_t_polys: Vec<_> = table.clone().into_iter().enumerate().map(|(i, point)| &(t_poly.clone() + point.neg()) / &(x_poly.clone() + t_root_of_unity.pow([i as u64]).neg())).collect();
         // optimize w5_poly = bc_weights[0] * q_t_polys[i_values[0]] + bc_weights[1] * q_t_polys[i_values[1]] + ... + bc_weights[h_i.len()-1] * q_t_polys[i_values[h_i.len()-1]]
