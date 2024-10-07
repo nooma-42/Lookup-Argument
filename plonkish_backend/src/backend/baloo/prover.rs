@@ -1,7 +1,7 @@
 use rand::rngs::OsRng;
 use num_integer::Roots;
 use std::{fmt::Debug, collections::HashSet, ops::Mul};
-use halo2_curves::{bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2}, pairing::MillerLoopResult};
+use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
     poly::{Polynomial, univariate::UnivariatePolynomial},
     backend::baloo::{
