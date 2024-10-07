@@ -1,21 +1,13 @@
 use rand::rngs::OsRng;
-use std::{fmt::Debug, marker::PhantomData, collections::HashSet, ops::Mul};
-
+use std::ops::Mul;
 use halo2_curves::{bn256::{multi_miller_loop, pairing, Bn256, Fr, G1Affine, G2Affine, G2Prepared, Gt, G1, G2}, pairing::MillerLoopResult};
 
 use crate::{
-    poly::Polynomial,
     poly::univariate::UnivariatePolynomial,
-    backend::baloo::preprocessor::preprocess,
-    pcs::{
-        PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
-    },
+    pcs::{univariate::UnivariateKzg, PolynomialCommitmentScheme},
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
-        test::std_rng,
-        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
+        arithmetic::Field,
+        transcript::{InMemoryTranscript, Keccak256Transcript},
     }
 };
 
@@ -56,10 +48,8 @@ pub fn multi_pairing(g1: &[G1Affine], g2: &[G2Affine]) -> Gt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashSet, ops::{Add, Mul}};
-    use halo2_curves::bn256::Fr;
-    use num_integer::Roots;
-    use crate::util::transcript::{FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
+    use std::ops::Add;
+
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
