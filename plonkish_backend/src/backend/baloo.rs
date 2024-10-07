@@ -626,7 +626,7 @@ mod tests {
         print!("w4_comm_1: {:?}\n", w4_comm_1);
 
         // todo: caulk+ calculate w5, w6
-        let t_poly = UnivariatePolynomial::lagrange(table).ifft();
+        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
         assert_eq!(t_poly.evaluate(&scalar_1), Fr::from(1 as u64));
         assert_eq!(t_poly.evaluate(&v_root_of_unity), Fr::from(2 as u64));
         assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([2 as u64])), Fr::from(3 as u64));
@@ -636,16 +636,25 @@ mod tests {
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
         let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
+
         // calculate barycentric_weights
         let bc_weights = barycentric_weights(&h_i);
+        let log_t = t.sqrt();
+        let t_root_of_unity = root_of_unity::<Fr>(log_t);
+
+        // w5_poly = (t_poly - t_I_poly) / z_I_poly
+        let w5_poly_direct = &(&t_poly - &t_i_poly) / &z_i_poly;
+        // q_t_poly_i = (t_poly - table[i])/X-root_of_unity^i
+        let q_t_polys: Vec<_> = table.clone().into_iter().enumerate().map(|(i, point)| &(t_poly.clone() + point.neg()) / &(x_poly.clone() + t_root_of_unity.pow([i as u64]).neg())).collect();
+        // optimize w5_poly = bc_weights[0] * q_t_polys[i_values[0]] + bc_weights[1] * q_t_polys[i_values[1]] + ... + bc_weights[h_i.len()-1] * q_t_polys[i_values[h_i.len()-1]]
+        let w5_poly = bc_weights.clone().into_iter().enumerate().map(|(i, weight)| &q_t_polys[i_values[i]] * weight).reduce(|acc, poly| &acc + poly).unwrap();
+        assert_eq!(w5_poly, w5_poly_direct);
         // w6_poly = z_H_poly * (bc_weights[0] * 1/X-h_i[0] + bc_weights[1] * 1/X-h_i[1] + ... + bc_weights[h_i.len()-1] * 1/X-h_i[h_i.len()-1])
         let denom_polys: Vec<_> = h_i.into_iter().map(|root| UnivariatePolynomial::monomial(vec![root.neg(), scalar_1])).collect();
-        let w6_poly = bc_weights.into_iter().enumerate().map(|(i, weight)| &(&z_h_poly / &denom_polys[i]) * weight).reduce(|acc, poly| &acc + poly).unwrap();
+        let w6_poly = bc_weights.clone().into_iter().enumerate().map(|(i, weight)| &(&z_h_poly / &denom_polys[i]) * weight).reduce(|acc, poly| &acc + poly).unwrap();
         // w6_poly = z_H_poly / z_I_poly
         let w6_poly_direct = &z_h_poly / &z_i_poly;
         assert_eq!(w6_poly, w6_poly_direct);
-        // w5_poly = (t_poly - t_I_poly) / z_I_poly
-        let w5_poly = &(&t_poly - &t_i_poly) / &z_i_poly;
 
         let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
         let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
