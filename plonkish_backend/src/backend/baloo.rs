@@ -23,6 +23,7 @@ use crate::{
 pub mod preprocessor;
 pub mod prover;
 pub mod verifier;
+pub mod util;
 
 #[derive(Clone, Debug)]
 pub struct BalooProverParam //<F, Pcs>
