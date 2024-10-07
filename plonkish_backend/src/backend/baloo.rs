@@ -13,7 +13,7 @@ use crate::{
         univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
     },
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm},
+        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
         test::std_rng,
         transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
     }
@@ -186,7 +186,6 @@ impl<F: Field> Baloo<F>
 
 fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> UnivariatePolynomial<Fr> {
     assert!(h_i_values.len() == t_values_from_lookup.len());
-    println!("h_i_values: {:?}", h_i_values);
 
     let vanishing_poly = UnivariatePolynomial::vanishing(h_i_values, Fr::one());
     let mut bary_centric_weights = vec![Fr::one(); h_i_values.len()];
@@ -610,7 +609,7 @@ mod tests {
         let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
         // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
         // v5 = E(ζ)
-        // todo: use fft to do division?
+
         let w4 = &(&(e_poly + v5.neg()) + &p_e_poly * gamma) / &x_zeta_poly;
         // let w44 = &p_e_poly / &x_zeta_poly;
         // let w4 = &(e_poly + v5.neg()) / &x_zeta_poly;
@@ -637,10 +636,16 @@ mod tests {
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
         let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
-        // w5_poly = (t_poly - t_I_poly) / z_I_poly
+        // calculate barycentric_weights
+        let bc_weights = barycentric_weights(&h_i);
+        // w6_poly = z_H_poly * (bc_weights[0] * 1/X-h_i[0] + bc_weights[1] * 1/X-h_i[1] + ... + bc_weights[h_i.len()-1] * 1/X-h_i[h_i.len()-1])
+        let denom_polys: Vec<_> = h_i.into_iter().map(|root| UnivariatePolynomial::monomial(vec![root.neg(), scalar_1])).collect();
+        let w6_poly = bc_weights.into_iter().enumerate().map(|(i, weight)| &(&z_h_poly / &denom_polys[i]) * weight).reduce(|acc, poly| &acc + poly).unwrap();
         // w6_poly = z_H_poly / z_I_poly
+        let w6_poly_direct = &z_h_poly / &z_i_poly;
+        assert_eq!(w6_poly, w6_poly_direct);
+        // w5_poly = (t_poly - t_I_poly) / z_I_poly
         let w5_poly = &(&t_poly - &t_i_poly) / &z_i_poly;
-        let w6_poly = &z_h_poly / &z_i_poly;
 
         let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
         let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
