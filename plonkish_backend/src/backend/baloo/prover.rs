@@ -18,8 +18,7 @@ use crate::{
         transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
     }
 };
-use std::{collections::HashSet, ops::{Add, Mul}};
-use halo2_curves::bn256::Fr;
+use std::{collections::HashSet, ops::Mul};
 use num_integer::Roots;
 use crate::util::transcript::{FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
 
@@ -48,9 +47,9 @@ pub struct Baloo<F> {
     // round1: (&self, &UnivariateKzgProverParam<M>, Vec<F>, Vec<F>) -> Vec<F>
 }
 
-impl<F: Field> Baloo<F>
+impl Baloo<Fr>
 {
-    pub fn new(table: Vec<F>) -> Self {
+    pub fn new(table: Vec<Fr>) -> Self {
         Baloo { table }
     }
     /*
@@ -82,12 +81,7 @@ impl<F: Field> Baloo<F>
     xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
     Interpolation with xi and get polynomial: ξ(x)
     */
-    pub fn round1<Pcs, T>(&self, lookup: Vec<F>) -> Vec<F>
-    where
-        Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>,
-        T: TranscriptRead<Pcs::CommitmentChunk, F>
-            + TranscriptWrite<Pcs::CommitmentChunk, F>
-            + InMemoryTranscript<Param = ()>,
+    pub fn round1(&self, lookup: Vec<Fr>) -> Vec<Fr>
     {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
@@ -108,7 +102,7 @@ impl<F: Field> Baloo<F>
 
         // Commit and open
         let mut transcript = Keccak256Transcript::new(());
-        // commit phi(X) on G1
+        // commit ξ(x) on G1
         let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
         print!("coeffs: {:?}\n", phi_poly.coeffs());
         let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
@@ -541,7 +535,7 @@ impl<F: Field> Baloo<F>
         let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
         assert_eq!(w4_pairing_lhs, w4_pairing_rhs);
         println!("Finished to verify: w4");
-        vec![w1_comm_1, w2_comm_1, w3_comm_1, w4_comm_1, w5_comm_1, w6_comm_1]
+        vec![Fr::one(), Fr::one()]
     }
 
     // type Pcs = Pcs;
