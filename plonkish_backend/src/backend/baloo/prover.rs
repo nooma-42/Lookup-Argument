@@ -396,8 +396,6 @@ impl Baloo<Fr>
         let w6_poly_direct = &z_h_poly / &z_i_poly;
         assert_eq!(w6_poly, w6_poly_direct);
 
-        let w5_comm_1 = Pcs::commit_and_write(&pp, &w5_poly, &mut transcript).unwrap();
-        let w6_comm_1 = Pcs::commit_and_write(&pp, &w6_poly, &mut transcript).unwrap();
         // print!("w5_comm_1: {:?}\n", w5_comm_1);
         // print!("w6_comm_1: {:?}\n", w6_comm_1);
         // todo: Compress Caulk+ proof.
@@ -429,10 +427,7 @@ impl Baloo<Fr>
             &[scalar_1, -scalar_1, gamma],
             &[t_comm_1.clone().to_affine(), t_i_comm_1.clone().to_affine(), z_h_comm_1.clone().to_affine()]
         ).into();
-        let subtable_msm_rhs = variable_base_msm(
-            &[scalar_1, gamma],
-            &[w5_comm_1.clone().to_affine(), w6_comm_1.clone().to_affine()]
-        ).into();
+        let subtable_msm_rhs = w5_w6_comm_1.clone().to_affine();
         let subtable_pairing_lhs = pairing(&subtable_msm_lhs, &g2_affine.clone());
         let subtable_pairing_rhs = pairing(&subtable_msm_rhs, &z_i_comm_2_affine.clone());
         assert_eq!(subtable_pairing_lhs, subtable_pairing_rhs);
