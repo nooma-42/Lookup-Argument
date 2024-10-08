@@ -59,7 +59,7 @@ impl Baloo<Fr>
     xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
     Interpolation with xi and get polynomial: ξ(x)
     */
-    pub fn round1(&self, lookup: Vec<Fr>) -> Vec<Fr>
+    pub fn prove(&self, lookup: Vec<Fr>) -> Vec<Fr>
     {
         let table = self.table.clone();
         let m = lookup.len();
@@ -527,7 +527,7 @@ mod tests {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         let baloo = Baloo::new(table);
-        let result = baloo.round1(lookup);
+        let result = baloo.prove(lookup);
         println!("result: {:?}", result);
     }
 
