@@ -395,106 +395,122 @@ impl Baloo<Fr>
 
         // π4 = (v1, v2, v3, v4, v5, [a]1, [w1]1, [w2]1, [w3]1, [w4]1)
         let pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
+        let proof: Vec<u8> = transcript.into_proof();
 
-        let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
-        // [φ(x)]1
-        let phi_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
+        let phi_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
+        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+        Self::verify(
+            &proof,
+            &pp,
+            &vp,
+            &param,
+            &phi_comm_1,
+            &z_h_comm_1,
+            &t_i_poly,
+            d,
+            m,
+            alpha,
+            beta,
+            gamma,
+            zeta,
+            z_v_zeta
+        );
+        vec![Fr::one(), Fr::one()]
+    }
+    fn verify(
+        proof: &Vec<u8>,
+        pp: &UnivariateKzgProverParam<Bn256>,
+        vp: &UnivariateKzgVerifierParam<Bn256>,
+        param: &UnivariateKzgParam<Bn256>,
+        phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        t_i_poly: &UnivariatePolynomial<Fr>,
+        d: usize,
+        m: usize,
+        alpha: Fr,
+        beta: Fr,
+        gamma: Fr,
+        zeta: Fr,
+        z_v_zeta: Fr
+    ) {
+        let scalar_0 = Fr::from(0 as u64);
+        let scalar_1 = Fr::from(1 as u64);
+        let gamma_2 = gamma.mul(gamma);
+        let gamma_3 = gamma_2.mul(gamma);
+        let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
         let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
         println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
 
-        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &t_i_poly.coeffs());
 
         // # X^(d-m+2)
         let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
         let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
-        let x_exponent_poly_2_comm_1 = Pcs::commit_and_write(&pp, &x_exponent_poly_2, &mut transcript).unwrap();
+        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
         // X^m
-        let x_m_exponent_poly_comm_1 = Pcs::commit_and_write(&pp, &x_m_exponent_poly.clone(), &mut transcript).unwrap();
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        let x_m_exponent_poly_comm_1 = Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
 
-        // let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
-        // let pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
-        // let pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
-        // let pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
-        let proof = transcript.into_proof();
-        {
-            let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
 
-            // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
-            let v_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("v_comm_1_back: {:?}", v_comm_1_back);
-            assert_eq!(v_comm_1, v_comm_1_back);
-            // g2
-            let z_i_comm_2_back: G2Affine = transcript.read_commitment_g2().unwrap();
-            println!("z_i_comm_2_back: {:?}", UnivariateKzgCommitment(z_i_comm_2_back));
-            assert_eq!(z_i_comm_2, UnivariateKzgCommitment(z_i_comm_2_back));
+        // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
+        let v_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("v_comm_1: {:?}", v_comm_1);
+        // g2
+        let z_i_comm_2: G2Affine = transcript.read_commitment_g2().unwrap();
+        println!("z_i_comm_2: {:?}", UnivariateKzgCommitment(z_i_comm_2));
 
-            let t_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("t_comm_1_back: {:?}", t_comm_1_back);
-            assert_eq!(t_comm_1, t_comm_1_back);
+        let t_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("t_comm_1: {:?}", t_comm_1);
 
-            // read pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
-            let d_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("d_comm_1_back: {:?}", d_comm_1_back);
-            assert_eq!(d_comm_1, d_comm_1_back);
+        // read pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
+        let d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("d_comm_1: {:?}", d_comm_1);
 
-            let r_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("r_comm_1_back: {:?}", r_comm_1_back);
-            assert_eq!(r_comm_1, r_comm_1_back);
+        let r_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("r_comm_1: {:?}", r_comm_1);
 
-            let q_d_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("q_d_comm_1_back: {:?}", q_d_comm_1_back);
-            assert_eq!(q_d_comm_1, q_d_comm_1_back);
+        let q_d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("q_d_comm_1: {:?}", q_d_comm_1);
 
-            // read pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
-            let e_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("e_comm_1_back: {:?}", e_comm_1_back);
-            assert_eq!(e_comm_1, e_comm_1_back);
+        // read pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
+        let e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("e_comm_1: {:?}", e_comm_1);
 
-            let q_e_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("q_e_comm_1_back: {:?}", q_e_comm_1_back);
-            assert_eq!(q_e_comm_1, q_e_comm_1_back);
-            // read pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
-            let v1_back = transcript.read_field_element().unwrap();
-            println!("v1_back: {:?}", v1_back);
-            assert_eq!(v1, v1_back);
+        let q_e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("q_e_comm_1: {:?}", q_e_comm_1);
+        // read pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
+        let v1: Fr = transcript.read_field_element().unwrap();
+        println!("v1: {:?}", v1);
 
-            let v2_back = transcript.read_field_element().unwrap();
-            println!("v2_back: {:?}", v2_back);
-            assert_eq!(v2, v2_back);
+        let v2: Fr = transcript.read_field_element().unwrap();
+        println!("v2: {:?}", v2);
 
-            let v3_back = transcript.read_field_element().unwrap();
-            println!("v3_back: {:?}", v3_back);
-            assert_eq!(v3, v3_back);
+        let v3: Fr = transcript.read_field_element().unwrap();
+        println!("v3: {:?}", v3);
 
-            let v4_back = transcript.read_field_element().unwrap();
-            println!("v4_back: {:?}", v4_back);
-            assert_eq!(v4, v4_back);
+        let v4: Fr = transcript.read_field_element().unwrap();
+        println!("v4: {:?}", v4);
 
-            let v5_back = transcript.read_field_element().unwrap();
-            println!("v5_back: {:?}", v5_back);
-            assert_eq!(v5, v5_back);
+        let v5: Fr = transcript.read_field_element().unwrap();
+        println!("v5: {:?}", v5);
 
-            let a_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("a_comm_1_back: {:?}", a_comm_1_back);
-            assert_eq!(a_comm_1, a_comm_1_back);
+        let a_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("a_comm_1: {:?}", a_comm_1);
 
-            let w1_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("w1_comm_1_back: {:?}", w1_comm_1_back);
-            assert_eq!(w1_comm_1, w1_comm_1_back);
+        let w1_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("w1_comm_1: {:?}", w1_comm_1);
 
-            let w2_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("w2_comm_1_back: {:?}", w2_comm_1_back);
-            assert_eq!(w2_comm_1, w2_comm_1_back);
+        let w2_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("w2_comm_1: {:?}", w2_comm_1);
 
-            let w3_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("w3_comm_1_back: {:?}", w3_comm_1_back);
-            assert_eq!(w3_comm_1, w3_comm_1_back);
+        let w3_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("w3_comm_1: {:?}", w3_comm_1);
 
-            let w4_comm_1_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-            println!("w4_comm_1_back: {:?}", w4_comm_1_back);
-            assert_eq!(w4_comm_1, w4_comm_1_back);
-        }
+        let w4_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("w4_comm_1: {:?}", w4_comm_1);
 
         /************
         Verification
@@ -504,7 +520,7 @@ impl Baloo<Fr>
         let g2 = G2::generator();
         let g1_affine = G1Affine::from(g1);
         let g2_affine = G2Affine::from(g2);
-        let z_i_comm_2_affine = z_i_comm_2.to_affine();
+        let z_i_comm_2_affine = z_i_comm_2;
         // 1. verify subtable
         // subtable_lhs = ec_lincomb([
         //     (t_comm_1, scalar_one),
@@ -632,7 +648,6 @@ impl Baloo<Fr>
         let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
         assert_eq!(w4_pairing_lhs, w4_pairing_rhs);
         println!("Finished to verify: w4");
-        vec![Fr::one(), Fr::one()]
     }
 }
 
