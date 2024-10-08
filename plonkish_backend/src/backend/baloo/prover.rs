@@ -130,17 +130,17 @@ impl Baloo<Fr>
         let v_poly = UnivariatePolynomial::lagrange(v_values.clone()).ifft();
 
         // [ξ(x)]1
-        let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
+        let v_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         // [t(x)]1
-        let t_comm_1 = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
+        let t_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
         // [z_I(x)]2
-        let z_i_comm_2 = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
+        let z_i_comm_2: UnivariateKzgCommitment<G2Affine> = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         transcript.write_commitment_g2(&z_i_comm_2.clone().to_affine()).unwrap();
         // [φ(x)]1
-        let phi_comm_1 = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
+        let phi_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &phi_poly, &mut transcript).unwrap();
 
         // π1 = ([ξ(x)]1, [z_I(x)]2, [t(x)]1)
-        let pi_1:(UnivariateKzgCommitment<G1Affine>, UnivariateKzgCommitment<G2Affine>, UnivariateKzgCommitment<G1Affine>)  = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
+        let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
 
         /************
           Round 2
@@ -265,24 +265,18 @@ impl Baloo<Fr>
         print!("q_e_poly: {:?}\n", q_e_poly);
 
         // π2 = ([D]1 = [D(x)]1, [R]1 = [R(x)]1, [Q2]1 = [Q_D(x)]1)
-        let t_i_comm_1 = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
-        let d_comm_1 = Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
-        let r_comm_1 = Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
-        let q_d_comm_1 = Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
+        let d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
+        let r_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
+        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
         // π3 = ([E]1 = [E(x)]1, [Q1]1 = [Q_E(x)]1)
-        let e_comm_1 = Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
-        let q_e_comm_1 = Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
-
-        print!("d_comm_1: {:?}\n", d_comm_1);
-        print!("r_comm_1: {:?}\n", r_comm_1);
-        print!("q_d_comm_1: {:?}\n", q_d_comm_1);
-        print!("e_comm_1: {:?}\n", e_comm_1);
-        print!("q_e_comm_1: {:?}\n", q_e_comm_1);
+        let e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
+        let q_e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
 
         // π2 = ([D]1, [R]1, [Q2]1)
-        let pi_2: (UnivariateKzgCommitment<G1Affine>, UnivariateKzgCommitment<G1Affine>, UnivariateKzgCommitment<G1Affine>) = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
+        let pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
         // π3 = ([E]1, [Q1]1)
-        let pi_3: (UnivariateKzgCommitment<G1Affine>, UnivariateKzgCommitment<G1Affine>) = (e_comm_1.clone(), q_e_comm_1.clone());
+        let pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
 
         /************
           Round 3: optimize with linear combination of polynomials
@@ -350,19 +344,7 @@ impl Baloo<Fr>
         let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
         // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
         // v5 = E(ζ)
-
         let w4 = &(&(e_poly + v5.neg()) + &p_e_poly * gamma) / &x_zeta_poly;
-
-        // calculate [w1]1, [w2]1, [w2]1, [w4]1
-        let w1_comm_1 = Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
-        let w2_comm_1 = Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
-        let w3_comm_1 = Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
-        let w4_comm_1 = Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
-
-        print!("w1_comm_1: {:?}\n", w1_comm_1);
-        print!("w2_comm_1: {:?}\n", w2_comm_1);
-        print!("w3_comm_1: {:?}\n", w3_comm_1);
-        print!("w4_comm_1: {:?}\n", w4_comm_1);
 
         // caulk+ calculate w5, w6
         let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
@@ -370,11 +352,9 @@ impl Baloo<Fr>
         assert_eq!(t_poly.evaluate(&v_root_of_unity), Fr::from(2 as u64));
         assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([2 as u64])), Fr::from(3 as u64));
         assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([3 as u64])), Fr::from(4 as u64));
-        let t_comm_1 = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
         // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
-        let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
 
         // calculate barycentric_weights
         let bc_weights = barycentric_weights(&h_i);
@@ -400,6 +380,13 @@ impl Baloo<Fr>
         // print!("w6_comm_1: {:?}\n", w6_comm_1);
         // todo: Compress Caulk+ proof.
         let w5_w6_poly = &w5_poly.clone() + &w6_poly.clone() * gamma;
+
+        // calculate [w1]1, [w2]1, [w2]1, [w4]1
+        let w1_comm_1 = Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
+        let w2_comm_1 = Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
+        let w3_comm_1 = Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
+        let w4_comm_1 = Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
+
         // [a]1
         let w5_w6_comm_1 = Pcs::commit_and_write(&pp, &w5_w6_poly, &mut transcript).unwrap();
         // π4 = (v1, v2, v3, v4, v5, [a]1, [w1]1, [w2]1, [w3]1, [w4]1)
@@ -408,6 +395,8 @@ impl Baloo<Fr>
         /************
           Verification
         ************/
+        // todo: move this to common inputs
+        let z_h_comm_1 = Pcs::commit_and_write(&pp, &z_h_poly, &mut transcript).unwrap();
         let g1 = G1::generator();
         let g2 = G2::generator();
         let g1_affine = G1Affine::from(g1);
