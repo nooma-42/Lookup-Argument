@@ -30,35 +30,6 @@ impl Baloo<Fr>
     pub fn new(table: Vec<Fr>) -> Self {
         Baloo { table }
     }
-    /*
-    How to calculate ξ(x)(or v(x) in code)
-
-    H = [1, ω, ω^2, ω^3, ω^4, ω^5, ω^6, ω^7]
-    table = [1, 2, 3, 4, 5, 6, 7, 8]
-    lookup = [3, 7, 3, 4]
-    t_I:  [3, 4, 7] # choose non-duplicated elements from lookup
-    I:  [2, 3, 6] # get indexes from table
-    s ∈ I = [2, 3, 6]
-    H_I = {ω^s} = [ω^2, ω^3, ω^6]
-    k = len(I) = 3
-    vanishing polynomial z_I(X) = (X - H_I_0)(X - H_I_1)(X - H_I_2)
-                                = (X - ω^2)(X - ω^3)(X - ω^6)
-    M * t = lookup
-    M = [
-        [0, 0, 1, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 1, 0],
-        [0, 0, 1, 0, 0, 0, 0, 0],
-        [0, 0, 0, 1, 0, 0, 0, 0],
-    ]
-    m = len(lookup) # 4
-    col[0] = M[0].index(1)
-    col[1] = M[1].index(1)
-    col[2] = M[2].index(1)
-    col[3] = M[3].index(1)
-    col: [2, 6, 2, 3]
-    xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
-    Interpolation with xi and get polynomial: ξ(x)
-    */
     pub fn prove(&self, lookup: Vec<Fr>) -> Vec<Fr>
     {
         let table = self.table.clone();
@@ -75,6 +46,39 @@ impl Baloo<Fr>
         let param = Pcs::setup(srs_size, 1, &mut rng).unwrap();
         let (pp, vp) = Pcs::trim(&param, srs_size, 1).unwrap();
         print!("lookup: {:?}\n", lookup);
+
+        /************
+          Round 1
+        ************/
+        /*
+        How to calculate ξ(x)(or v(x) in code)
+
+        H = [1, ω, ω^2, ω^3, ω^4, ω^5, ω^6, ω^7]
+        table = [1, 2, 3, 4, 5, 6, 7, 8]
+        lookup = [3, 7, 3, 4]
+        t_I:  [3, 4, 7] # choose non-duplicated elements from lookup
+        I:  [2, 3, 6] # get indexes from table
+        s ∈ I = [2, 3, 6]
+        H_I = {ω^s} = [ω^2, ω^3, ω^6]
+        k = len(I) = 3
+        vanishing polynomial z_I(X) = (X - H_I_0)(X - H_I_1)(X - H_I_2)
+                                    = (X - ω^2)(X - ω^3)(X - ω^6)
+        M * t = lookup
+        M = [
+            [0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0, 0],
+        ]
+        m = len(lookup) # 4
+        col[0] = M[0].index(1)
+        col[1] = M[1].index(1)
+        col[2] = M[2].index(1)
+        col[3] = M[3].index(1)
+        col: [2, 6, 2, 3]
+        xi = H_I[col_i] = [ω^2, ω^6, ω^2, ω^3]
+        Interpolation with xi and get polynomial: ξ(x)
+        */
 
         // Commit and open
         let mut transcript = Keccak256Transcript::new(());
@@ -130,16 +134,45 @@ impl Baloo<Fr>
         let v_comm_1 = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         print!("v_comm_1: {:?}\n", v_comm_1);
 
-        // round 2
+        /************
+          Round 2
+        ************/
+        /*
+        Calculate μ_i(X), i = [0, m - 1], by interpolating it in V(multiplicative subgroup, order is m)
+        col_i = col[i]
+        v_i = V[i] # ω^i
+        v_col_i = V[col_i] # ω^col_i
+        μ_i(X) = z_V(X) / (z_V'(v_i) * (X - v_i)) = v_i / m * (X^m - 1) / (X - v_i)
+
+        Calculate Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0):
+        ξ_{col(i)} = H_I[col_i] # h_i
+        normalized_lag_poly = τ_col(i)(X) / τ_col(i)(0)
+                            = z_I(X) / z_I(0) * (0 - ξ_{col(i)}) / (X - ξ_{col(i)})
+
+        Calculate D(X), E(X)
+        D(X) = Σ_i(μ_i(α) * normalized_lag_poly)
+        E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
+
+        Calculate Q_D(X) and R(X): Theorem 5 (Inner Product Polynomial Relation) on Baloo paper
+        D(X) * t_I(X) - φ(α) - R(X) = z_I(X) * Q_D(X)
+        Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X) # polynomial division with remainder
+
+        Calculate Q_E(X)
+        1) Baloo paper uses this construction
+        v_i = 1 / H_I[col_i]
+        v(X): interpolate polynomial with v_i values
+        E(X) * (βv(X) - 1) + z_I(β) / z_I(0) = z_V(X) * Q_E(X)
+        Q_E(X) = (E(X) * (βv(X) - 1) + z_I(β) / z_I(0)) / z_V(X)
+
+        2) Our code uses this optimized construction:
+        v_i = H_I[col_i]
+        v(X): interpolate polynomial with v_i values
+        E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0) = z_V(X) * Q_E(X)
+        Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
+        */
+
         let alpha = transcript.squeeze_challenge();
         let beta = transcript.squeeze_challenge();
-        // let z_i_poly = self::z_i_poly.clone();
-        // let v_poly = self::v_poly.clone();
-        // let t_i_poly = self::t_i_poly.clone();
-        // let col = self::col.clone();
-        // let h_i = self::h_i.clone();
-        // let phi_poly = self::phi_poly.clone();
-        // let m = self::m;
 
         let scalar_0 = Fr::from(0);
         let scalar_1 = Fr::from(1);
@@ -239,17 +272,16 @@ impl Baloo<Fr>
         print!("e_comm_1: {:?}\n", e_comm_1);
         print!("q_e_comm_1: {:?}\n", q_e_comm_1);
 
-        // self::z_V_poly = z_V_poly;
-        // self::D_poly = D_poly;
-        // self::E_poly = E_poly;
-        // self::R_poly = R_poly;
-        // self::Q_D_poly = Q_D_poly;
-        // self::Q_E_poly = Q_E_poly;
 
         // TODO
         // return message2(d_comm_1, r_comm_1, q_d_comm_1, e_comm_1, q_e_comm_1);
 
-        // round 3
+        /************
+          Round 3: optimize with linear combination of polynomials
+        ************/
+        /*
+        Calculate w1, w2, w3, w4
+        */
         let gamma: Fr = transcript.squeeze_challenge();
         let zeta: Fr = transcript.squeeze_challenge();
         let gamma_2 = gamma.mul(gamma);
@@ -364,7 +396,9 @@ impl Baloo<Fr>
         // print!("w5_comm_1: {:?}\n", w5_comm_1);
         // print!("w6_comm_1: {:?}\n", w6_comm_1);
 
-        // verification
+        /************
+          Verification
+        ************/
         let g1 = G1::generator();
         let g2 = G2::generator();
         let g1_affine = G1Affine::from(g1);
