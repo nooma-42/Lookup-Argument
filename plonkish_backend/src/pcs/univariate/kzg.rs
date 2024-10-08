@@ -52,15 +52,6 @@ impl<M: MultiMillerLoop> UnivariateKzg<M> {
         let comm = variable_base_msm(evals, &param.powers_of_s_g2[..evals.len()]).into();
         UnivariateKzgCommitment(comm)
     }
-
-    // fn commit_g2(param: &UnivariateKzgParam<M>, poly: &<Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial) -> Result<<Pcs as PolynomialCommitmentScheme<Fr>>::Commitment, Error> {
-    //     // validate_input("commit", pp.degree(), [poly])?;
-
-    //     match poly.basis() {
-    //         Monomial => Ok(Self::commit_monomial_g2(param, poly.coeffs())),
-    //         Lagrange => Ok(Self::commit_lagrange_g2(param, poly.coeffs())),
-    //     }
-    // }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
