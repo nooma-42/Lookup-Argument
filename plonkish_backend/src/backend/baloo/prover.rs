@@ -36,7 +36,6 @@ impl Baloo<'_>
         lookup: &Vec<Fr>,
         param: &UnivariateKzgParam<Bn256>,
         pp: &UnivariateKzgProverParam<Bn256>,
-        srs_size: usize,
         d: usize,
     ) -> Vec<u8>
     {
@@ -654,7 +653,7 @@ mod tests {
     use halo2_curves::bn256::Fr;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
-
+    use std::cmp::max;
     #[test]
     fn test_baloo_proof() {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
@@ -666,19 +665,14 @@ mod tests {
 
         let m = lookup.len();
         let t = table.len();
-        let poly_size = m;
-        print!("poly_size: {:?}\n", poly_size);
-        // TODO: proper srs size
-        let srs_size = 1 << 8;
-        let d = srs_size - 2;
+
+        let mut rng = OsRng;
 
         // Setup
-        let mut rng = OsRng;
-        let param = Pcs::setup(srs_size, 1, &mut rng).unwrap();
-        let (pp, vp) = Pcs::trim(&param, srs_size, 1).unwrap();
-
-        let proof = baloo.prove(&lookup, &param, &pp, srs_size, d);
-        println!("proof: {:?}", proof);
+        let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
+        let d = poly_size - 2;
+        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
 
         // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
