@@ -368,7 +368,6 @@ impl Baloo<'_>
 
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
         let w5_poly_direct = &(&t_poly - &t_i_poly) / &z_i_poly;
-        // todo: move this calculation to common inputs
         // q_t_poly_i = (t_poly - table[i])/X-root_of_unity^i
         let q_t_polys: Vec<_> = table.clone().into_iter().enumerate().map(|(i, point)| &(t_poly.clone() + point.neg()) / &(x_poly.clone() + t_root_of_unity.pow([i as u64]).neg())).collect();
         // optimize w5_poly = bc_weights[0] * q_t_polys[i_values[0]] + bc_weights[1] * q_t_polys[i_values[1]] + ... + bc_weights[h_i.len()-1] * q_t_polys[i_values[h_i.len()-1]]
@@ -509,7 +508,6 @@ impl Baloo<'_>
         /************
         Verification
         ************/
-        // todo: move this to common inputs
         let g1 = G1::generator();
         let g2 = G2::generator();
         let g1_affine = G1Affine::from(g1);
@@ -674,18 +672,24 @@ mod tests {
         let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
         let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
 
-        // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
+        // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
+        // [z_h(x)]1
         let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+        // t(x)
+        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
+        // [t(x)]1
+        let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
+
+        // generate proof
+        let proof = baloo.prove(&lookup, &param, &pp, d);
+        println!("proof: {:?}", proof);
 
         // φ(x)
         let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
-        // t(x)
-        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
         let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
-        let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
-
+        // todo: cached all [x^s]1, [x^s]2?
         // X^m
         let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
         // [X^m]1
