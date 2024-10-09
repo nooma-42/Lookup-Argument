@@ -404,38 +404,20 @@ impl Baloo<'_>
         let pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
 
         // generate proof from transcript
-        let proof: Vec<u8> = transcript.into_proof();
-
-        // let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
-        // let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
-        // let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
-
-        // Self::verify(
-        //     &proof,
-        //     &param,
-        //     &pp,
-        //     &vp,
-        //     &z_h_comm_1,
-        //     &phi_comm_1,
-        //     &t_comm_1,
-        //     t,
-        //     d,
-        //     m,
-        // );
-        proof
+        transcript.into_proof()
     }
 
     pub fn verify(
         &self,
         proof: &Vec<u8>,
-        param: &UnivariateKzgParam<Bn256>,
-        pp: &UnivariateKzgProverParam<Bn256>,
         vp: &UnivariateKzgVerifierParam<Bn256>,
         z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
         phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
         t_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        t: usize,
-        d: usize,
+        x_m_exponent_poly_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_comm_2: &UnivariateKzgCommitment<G2Affine>,
+        x_exponent_poly_2_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_2_comm_2: &UnivariateKzgCommitment<G2Affine>,
         m: usize,
     ) -> bool {
         let scalar_0 = Fr::from(0 as u64);
@@ -510,14 +492,7 @@ impl Baloo<'_>
         let w4_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("w4_comm_1: {:?}", w4_comm_1);
 
-        // X^(d-m+1)
-        let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
-        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs_x_exponent_poly);
-        // [X^(d-m+1)]2
-        let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
-        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
-
-        // [-1, 0, 0, ..., 1], m - 1 0s in between
+        // Construct X^m - 1, [-1, 0, 0, ..., 1], m - 1 0s in between
         let z_v_values: Vec<Fr> = vec![scalar_1.neg()]
             .into_iter()
             .chain((0..m - 1).map(|_| scalar_0))
@@ -531,18 +506,6 @@ impl Baloo<'_>
         let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
         assert_eq!(z_v_poly.evaluate(&v_root_of_unity), scalar_0);
         let z_v_zeta = z_v_poly.evaluate(&zeta);
-
-        // X^(d-m+2)
-        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
-        let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
-        // [X^(d-m+2)]1
-        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
-        // [X^(d-m+2)]2
-        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
-        // X^m
-        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
-        // [X^m]1
-        let x_m_exponent_poly_comm_1 = Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
 
         /************
         Verification
@@ -587,7 +550,7 @@ impl Baloo<'_>
             &[alpha],
             &[w1_comm_1_affine.clone()]
         ).into();
-        let x_exponent_poly_comm_2_affine = x_exponent_poly_comm_2.to_affine();
+        let x_exponent_poly_comm_2_affine = x_exponent_poly_comm_2.clone().to_affine();
         print!("w1_rhs2: {:?}\n", w1_rhs2);
         assert_eq!(vp.g2(), g2_affine);
         let g1_terms = vec![w1_rhs1, w1_rhs2];
@@ -600,9 +563,9 @@ impl Baloo<'_>
 
         // 3. verify w2 for X = 0
         // to affine
-        let x_exponent_poly_2_comm_1_affine = x_exponent_poly_2_comm_1.to_affine();
-        let x_exponent_poly_2_comm_2_affine = x_exponent_poly_2_comm_2.to_affine();
-        let x_m_exponent_poly_comm_1_affine = x_m_exponent_poly_comm_1.to_affine();
+        let x_exponent_poly_2_comm_1_affine = x_exponent_poly_2_comm_1.clone().to_affine();
+        let x_exponent_poly_2_comm_2_affine = x_exponent_poly_2_comm_2.clone().to_affine();
+        let x_m_exponent_poly_comm_1_affine = x_m_exponent_poly_comm_1.clone().to_affine();
         let r_comm_1_affine = r_comm_1.to_affine();
         let w2_comm_1_affine: G1Affine = w2_comm_1.to_affine();
 
@@ -729,7 +692,27 @@ mod tests {
         let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
         let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
 
-        baloo.verify(&proof, &param, &pp, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, t, d, m);
+        // X^m
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        // [X^m]1
+        let x_m_exponent_poly_comm_1 = Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
+
+        // X^(d-m+1)
+        let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs_x_exponent_poly);
+        // [X^(d-m+1)]2
+        let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
+        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
+
+        // X^(d-m+2)
+        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
+        // [X^(d-m+2)]1
+        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
+        // [X^(d-m+2)]2
+        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
+
+        baloo.verify(&proof, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
 
         println!("Finished to verify: baloo");
 
