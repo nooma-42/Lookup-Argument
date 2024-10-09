@@ -21,25 +21,34 @@ use crate::{
 
 type Pcs = UnivariateKzg<Bn256>;
 
-pub struct Baloo<'b> {
+pub struct Prover<'b> {
     table: &'b Vec<Fr>,
+    param: &'b UnivariateKzgParam<Bn256>,
+    pp: &'b UnivariateKzgProverParam<Bn256>,
+    d: usize,
 }
 
-impl Baloo<'_>
+impl Prover<'_>
 {
-    pub fn new<'a>(table: &'a Vec<Fr>) -> Baloo<'a> {
-        Baloo { table }
+    pub fn new<'a>(
+        table: &'a Vec<Fr>,
+        param: &'a UnivariateKzgParam<Bn256>,
+        pp: &'a UnivariateKzgProverParam<Bn256>
+    ) -> Prover<'a> {
+        let d = 2_usize.pow(pp.k() as u32) - 2;
+        Prover { table, param, pp, d }
     }
 
     pub fn prove(
         &self,
         lookup: &Vec<Fr>,
-        param: &UnivariateKzgParam<Bn256>,
-        pp: &UnivariateKzgProverParam<Bn256>,
-        d: usize,
     ) -> Vec<u8>
     {
         let table = self.table.clone();
+        let param = self.param.clone();
+        let pp = self.pp.clone();
+        let d = self.d;
+
         let m = lookup.len();
         let t = table.len();
 
@@ -656,7 +665,6 @@ mod tests {
     fn test_baloo_proof() {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
-        let baloo = Baloo::new(&table);
 
         let scalar_0 = Fr::from(0 as u64);
         let scalar_1 = Fr::from(1 as u64);
@@ -671,6 +679,7 @@ mod tests {
         let d = poly_size - 2;
         let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
         let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
+        assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
         // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
@@ -682,8 +691,10 @@ mod tests {
         // [t(x)]1
         let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
 
+        let prover = Prover::new(&table, &param, &pp);
+
         // generate proof
-        let proof = baloo.prove(&lookup, &param, &pp, d);
+        let proof = prover.prove(&lookup);
         println!("proof: {:?}", proof);
 
         // φ(x)
@@ -710,7 +721,7 @@ mod tests {
         // [X^(d-m+2)]2
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
 
-        baloo.verify(&proof, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
+        prover.verify(&proof, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
 
         println!("Finished to verify: baloo");
 
