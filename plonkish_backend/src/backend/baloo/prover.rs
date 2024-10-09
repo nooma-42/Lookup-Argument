@@ -228,20 +228,14 @@ impl Baloo<Fr>
             // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
             e_poly += &mu_poly * normalized_lag_poly_at_beta;
         }
-        print!("d_poly: {:?}\n", d_poly);
-        print!("e_poly: {:?}\n", e_poly);
 
         // D(X) * t_I(X)
         let d_t_poly = d_poly.poly_mul(t_i_poly.clone());
         // φ(α)
         let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
-        print!("d_t_poly: {:?}\n", d_t_poly);
-        print!("phi_poly_at_alpha: {:?}\n", phi_poly_at_alpha);
 
         // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
         let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
-        print!("q_d_poly: {:?}\n", q_d_poly);
-        print!("r_poly: {:?}\n", r_poly);
         assert_eq!(r_poly.evaluate(&scalar_0), scalar_0);
 
         let z_i_at_beta = z_i_poly.evaluate(&beta);
@@ -373,9 +367,7 @@ impl Baloo<Fr>
         let w6_poly_direct = &z_h_poly / &z_i_poly;
         assert_eq!(w6_poly, w6_poly_direct);
 
-        // print!("w5_comm_1: {:?}\n", w5_comm_1);
-        // print!("w6_comm_1: {:?}\n", w6_comm_1);
-        // todo: Compress Caulk+ proof.
+        // Compress Caulk+ proof.
         let a_poly = &w5_poly.clone() + &w6_poly.clone() * gamma;
 
         // write v1, v2, v3, v4, v5 to transcript
