@@ -21,31 +21,28 @@ use crate::{
 
 type Pcs = UnivariateKzg<Bn256>;
 
-pub struct Baloo<F> {
-    table: Vec<F>,
+pub struct Baloo<'b> {
+    table: &'b Vec<Fr>,
 }
 
-impl Baloo<Fr>
+impl Baloo<'_>
 {
-    pub fn new(table: Vec<Fr>) -> Self {
+    pub fn new<'a>(table: &'a Vec<Fr>) -> Baloo<'a> {
         Baloo { table }
     }
-    pub fn prove(&self, lookup: Vec<Fr>) -> Vec<u8>
+
+    pub fn prove(
+        &self,
+        lookup: &Vec<Fr>,
+        param: &UnivariateKzgParam<Bn256>,
+        pp: &UnivariateKzgProverParam<Bn256>,
+        srs_size: usize,
+        d: usize,
+    ) -> Vec<u8>
     {
         let table = self.table.clone();
         let m = lookup.len();
         let t = table.len();
-
-        // Setup
-        let mut rng = OsRng;
-        let poly_size = m;
-        print!("poly_size: {:?}\n", poly_size);
-        // TODO: proper srs size
-        let srs_size = 1 << 8;
-        print!("srs_size: {:?}\n", srs_size);
-        let param = Pcs::setup(srs_size, 1, &mut rng).unwrap();
-        let (pp, vp) = Pcs::trim(&param, srs_size, 1).unwrap();
-        print!("lookup: {:?}\n", lookup);
 
         /************
           Round 1
@@ -135,12 +132,12 @@ impl Baloo<Fr>
         let z_i_comm_2: UnivariateKzgCommitment<G2Affine> = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
         transcript.write_commitment_g2(&z_i_comm_2.clone().to_affine()).unwrap();
         // [t(x)]1
-        let t_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
 
         let alpha = transcript.squeeze_challenge();
 
         // π1 = ([ξ(x)]1, [z_I(x)]2, [t(x)]1)
-        let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
+        let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_i_comm_1.clone());
 
 
         /************
@@ -304,7 +301,6 @@ impl Baloo<Fr>
         Calculate w1, w2, w3, w4
         */
 
-        let d = srs_size - 2;
         // calculate v1, v2, v3, v4, v5
         // v1 = e(α)
         let v1 = e_poly.evaluate(&alpha);
@@ -362,11 +358,6 @@ impl Baloo<Fr>
         let w4 = &(&(e_poly + v5.neg()) + &p_e_poly * gamma) / &x_zeta_poly;
 
         // caulk+ calculate w5, w6
-        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
-        assert_eq!(t_poly.evaluate(&scalar_1), Fr::from(1 as u64));
-        assert_eq!(t_poly.evaluate(&v_root_of_unity), Fr::from(2 as u64));
-        assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([2 as u64])), Fr::from(3 as u64));
-        assert_eq!(t_poly.evaluate(&v_root_of_unity.pow([3 as u64])), Fr::from(4 as u64));
         // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
@@ -415,50 +406,52 @@ impl Baloo<Fr>
         // generate proof from transcript
         let proof: Vec<u8> = transcript.into_proof();
 
-        let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
         // let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
-        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &t_i_poly.coeffs());
+        // let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
+        // let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
 
-        Self::verify(
-            &proof,
-            &pp,
-            &vp,
-            &param,
-            &phi_comm_1,
-            // &z_h_comm_1,
-            &t_i_comm_1,
-            t,
-            d,
-            m,
-        );
+        // Self::verify(
+        //     &proof,
+        //     &param,
+        //     &pp,
+        //     &vp,
+        //     &z_h_comm_1,
+        //     &phi_comm_1,
+        //     &t_comm_1,
+        //     t,
+        //     d,
+        //     m,
+        // );
         proof
     }
-    fn verify(
+
+    pub fn verify(
+        &self,
         proof: &Vec<u8>,
+        param: &UnivariateKzgParam<Bn256>,
         pp: &UnivariateKzgProverParam<Bn256>,
         vp: &UnivariateKzgVerifierParam<Bn256>,
-        param: &UnivariateKzgParam<Bn256>,
+        z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
         phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        // z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        t_i_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        t_comm_1: &UnivariateKzgCommitment<G1Affine>,
         t: usize,
         d: usize,
         m: usize,
-    ) {
+    ) -> bool {
         let scalar_0 = Fr::from(0 as u64);
         let scalar_1 = Fr::from(1 as u64);
 
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
 
-        // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
+        // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_i_comm_1.clone());
         let v_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("v_comm_1: {:?}", v_comm_1);
         // g2
         let z_i_comm_2: G2Affine = transcript.read_commitment_g2().unwrap();
         println!("z_i_comm_2: {:?}", UnivariateKzgCommitment(z_i_comm_2));
 
-        let t_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("t_comm_1: {:?}", t_comm_1);
+        let t_i_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("t_i_comm_1: {:?}", t_i_comm_1);
 
         let alpha: Fr = transcript.squeeze_challenge();
 
@@ -538,11 +531,6 @@ impl Baloo<Fr>
         let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
         assert_eq!(z_v_poly.evaluate(&v_root_of_unity), scalar_0);
         let z_v_zeta = z_v_poly.evaluate(&zeta);
-
-        // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
-        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
-        let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
-        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
 
         // X^(d-m+2)
         let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
@@ -692,6 +680,8 @@ impl Baloo<Fr>
         let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
         assert_eq!(w4_pairing_lhs, w4_pairing_rhs);
         println!("Finished to verify: w4");
+
+        true
     }
 }
 
@@ -706,9 +696,43 @@ mod tests {
     fn test_baloo_proof() {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
-        let baloo = Baloo::new(table);
-        let proof = baloo.prove(lookup);
+        let baloo = Baloo::new(&table);
+
+        let scalar_0 = Fr::from(0 as u64);
+        let scalar_1 = Fr::from(1 as u64);
+
+        let m = lookup.len();
+        let t = table.len();
+        let poly_size = m;
+        print!("poly_size: {:?}\n", poly_size);
+        // TODO: proper srs size
+        let srs_size = 1 << 8;
+        let d = srs_size - 2;
+
+        // Setup
+        let mut rng = OsRng;
+        let param = Pcs::setup(srs_size, 1, &mut rng).unwrap();
+        let (pp, vp) = Pcs::trim(&param, srs_size, 1).unwrap();
+
+        let proof = baloo.prove(&lookup, &param, &pp, srs_size, d);
         println!("proof: {:?}", proof);
+
+        // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
+        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
+        let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
+        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+
+        // φ(x)
+        let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
+        // t(x)
+        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
+        let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
+        let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
+
+        baloo.verify(&proof, &param, &pp, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, t, d, m);
+
+        println!("Finished to verify: baloo");
+
     }
 
     #[test]
