@@ -30,7 +30,7 @@ impl Baloo<Fr>
     pub fn new(table: Vec<Fr>) -> Self {
         Baloo { table }
     }
-    pub fn prove(&self, lookup: Vec<Fr>) -> Vec<Fr>
+    pub fn prove(&self, lookup: Vec<Fr>) -> Vec<u8>
     {
         let table = self.table.clone();
         let m = lookup.len();
@@ -137,8 +137,11 @@ impl Baloo<Fr>
         // [t(x)]1
         let t_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_poly, &mut transcript).unwrap();
 
+        let alpha = transcript.squeeze_challenge();
+
         // π1 = ([ξ(x)]1, [z_I(x)]2, [t(x)]1)
         let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_comm_1.clone());
+
 
         /************
           Round 2
@@ -176,9 +179,6 @@ impl Baloo<Fr>
         E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0) = z_V(X) * Q_E(X)
         Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
         */
-        // todo: generate challenge based on commitments from last round
-        let alpha = transcript.squeeze_challenge();
-        let beta = transcript.squeeze_challenge();
 
         let scalar_0 = Fr::from(0);
         let scalar_1 = Fr::from(1);
@@ -198,15 +198,14 @@ impl Baloo<Fr>
 
         // z_I(0)
         let z_i_at_0 = z_i_poly.evaluate(&scalar_0);
+
         // calculate D(X) = Σ_{0, m-1} μ_i(α) * τ^_{col(i)}(X)
         let mut d_poly: UnivariatePolynomial<Fr> = zero_poly.clone();
-        let mut e_poly: UnivariatePolynomial<Fr> = zero_poly.clone();
         for i in 0..m {
             // col(i)
             let col_i = col_values[i];
             // ω^i
             let v_root = v_root_of_unity.pow([i as u64]);
-            print!("v_root: {:?}\n", v_root);
             // X - ω^i
             let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
             // ξ_i
@@ -221,12 +220,8 @@ impl Baloo<Fr>
             let normalized_lag_poly = &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
             // μ_i(α)
             let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
-            // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
-            let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
             // D(X) = Σ_i(μ_i(α) * normalized_lag_poly)
             d_poly += &normalized_lag_poly * mu_poly_at_alpha;
-            // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
-            e_poly += &mu_poly * normalized_lag_poly_at_beta;
         }
 
         // D(X) * t_I(X)
@@ -237,6 +232,38 @@ impl Baloo<Fr>
         // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
         let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
         assert_eq!(r_poly.evaluate(&scalar_0), scalar_0);
+
+        // π2 = ([D]1 = [D(x)]1, [R]1 = [R(x)]1, [Q2]1 = [Q_D(x)]1)
+        let d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
+        let r_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
+        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
+
+        let beta = transcript.squeeze_challenge();
+
+        // calculate E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
+        let mut e_poly: UnivariatePolynomial<Fr> = zero_poly.clone();
+        for i in 0..m {
+            // col(i)
+            let col_i = col_values[i];
+            // ω^i
+            let v_root = v_root_of_unity.pow([i as u64]);
+            // X - ω^i
+            let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
+            // ξ_i
+            let col_i_root = h_i[col_i];
+            // X - ξ_i
+            let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
+            // Lagrange polynomial on V: μ_i(X)
+            // z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
+            let mu_poly = &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
+            // z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
+            let normalized_lag_poly = &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
+            let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
+            // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
+            e_poly += &mu_poly * normalized_lag_poly_at_beta;
+        }
 
         let z_i_at_beta = z_i_poly.evaluate(&beta);
         // Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
@@ -256,13 +283,14 @@ impl Baloo<Fr>
         };
         print!("q_e_poly: {:?}\n", q_e_poly);
 
-        // π2 = ([D]1 = [D(x)]1, [R]1 = [R(x)]1, [Q2]1 = [Q_D(x)]1)
-        let d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
-        let r_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
-        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
         // π3 = ([E]1 = [E(x)]1, [Q1]1 = [Q_E(x)]1)
         let e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
         let q_e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
+
+        let gamma: Fr = transcript.squeeze_challenge();
+        let zeta: Fr = transcript.squeeze_challenge();
+        let gamma_2 = gamma.mul(gamma);
+        let gamma_3 = gamma_2.mul(gamma);
 
         // π2 = ([D]1, [R]1, [Q2]1)
         let pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
@@ -275,10 +303,6 @@ impl Baloo<Fr>
         /*
         Calculate w1, w2, w3, w4
         */
-        let gamma: Fr = transcript.squeeze_challenge();
-        let zeta: Fr = transcript.squeeze_challenge();
-        let gamma_2 = gamma.mul(gamma);
-        let gamma_3 = gamma_2.mul(gamma);
 
         let d = srs_size - 2;
         // calculate v1, v2, v3, v4, v5
@@ -387,27 +411,27 @@ impl Baloo<Fr>
 
         // π4 = (v1, v2, v3, v4, v5, [a]1, [w1]1, [w2]1, [w3]1, [w4]1)
         let pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
+
+        // generate proof from transcript
         let proof: Vec<u8> = transcript.into_proof();
 
-        let phi_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
-        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+        let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
+        // let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &t_i_poly.coeffs());
+
         Self::verify(
             &proof,
             &pp,
             &vp,
             &param,
             &phi_comm_1,
-            &z_h_comm_1,
-            &t_i_poly,
+            // &z_h_comm_1,
+            &t_i_comm_1,
+            t,
             d,
             m,
-            alpha,
-            beta,
-            gamma,
-            zeta,
-            z_v_zeta
         );
-        vec![Fr::one(), Fr::one()]
+        proof
     }
     fn verify(
         proof: &Vec<u8>,
@@ -415,35 +439,14 @@ impl Baloo<Fr>
         vp: &UnivariateKzgVerifierParam<Bn256>,
         param: &UnivariateKzgParam<Bn256>,
         phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        t_i_poly: &UnivariatePolynomial<Fr>,
+        // z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        t_i_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        t: usize,
         d: usize,
         m: usize,
-        alpha: Fr,
-        beta: Fr,
-        gamma: Fr,
-        zeta: Fr,
-        z_v_zeta: Fr
     ) {
         let scalar_0 = Fr::from(0 as u64);
         let scalar_1 = Fr::from(1 as u64);
-        let gamma_2 = gamma.mul(gamma);
-        let gamma_3 = gamma_2.mul(gamma);
-        let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
-        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
-        let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
-        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
-
-        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_monomial(&pp, &t_i_poly.coeffs());
-
-        // # X^(d-m+2)
-        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
-        let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
-        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
-        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
-        // X^m
-        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
-        let x_m_exponent_poly_comm_1 = Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
 
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
 
@@ -457,6 +460,8 @@ impl Baloo<Fr>
         let t_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("t_comm_1: {:?}", t_comm_1);
 
+        let alpha: Fr = transcript.squeeze_challenge();
+
         // read pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
         let d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("d_comm_1: {:?}", d_comm_1);
@@ -467,12 +472,20 @@ impl Baloo<Fr>
         let q_d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("q_d_comm_1: {:?}", q_d_comm_1);
 
+        let beta: Fr = transcript.squeeze_challenge();
+
         // read pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
         let e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("e_comm_1: {:?}", e_comm_1);
 
         let q_e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("q_e_comm_1: {:?}", q_e_comm_1);
+
+        let gamma: Fr = transcript.squeeze_challenge();
+        let zeta: Fr = transcript.squeeze_challenge();
+        let gamma_2 = gamma.mul(gamma);
+        let gamma_3 = gamma_2.mul(gamma);
+
         // read pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
         let v1: Fr = transcript.read_field_element().unwrap();
         println!("v1: {:?}", v1);
@@ -503,6 +516,45 @@ impl Baloo<Fr>
 
         let w4_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("w4_comm_1: {:?}", w4_comm_1);
+
+        // X^(d-m+1)
+        let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs_x_exponent_poly);
+        // [X^(d-m+1)]2
+        let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
+        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
+
+        // [-1, 0, 0, ..., 1], m - 1 0s in between
+        let z_v_values: Vec<Fr> = vec![scalar_1.neg()]
+            .into_iter()
+            .chain((0..m - 1).map(|_| scalar_0))
+            .chain(vec![scalar_1])
+            .collect();
+        assert_eq!(z_v_values.len(), m + 1);
+
+        let log_m = m.sqrt();
+        let v_root_of_unity = root_of_unity::<Fr>(log_m);
+        // X^m - 1
+        let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
+        assert_eq!(z_v_poly.evaluate(&v_root_of_unity), scalar_0);
+        let z_v_zeta = z_v_poly.evaluate(&zeta);
+
+        // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
+        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
+        let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
+        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
+
+        // X^(d-m+2)
+        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
+        // [X^(d-m+2)]1
+        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
+        // [X^(d-m+2)]2
+        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
+        // X^m
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        // [X^m]1
+        let x_m_exponent_poly_comm_1 = Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
 
         /************
         Verification
@@ -655,8 +707,8 @@ mod tests {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         let baloo = Baloo::new(table);
-        let result = baloo.prove(lookup);
-        println!("result: {:?}", result);
+        let proof = baloo.prove(lookup);
+        println!("proof: {:?}", proof);
     }
 
     #[test]
