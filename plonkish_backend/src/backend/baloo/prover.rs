@@ -413,11 +413,23 @@ impl Prover<'_>
         // generate proof from transcript
         transcript.into_proof()
     }
+}
+
+pub struct Verifier<'b> {
+    vp: &'b UnivariateKzgVerifierParam<Bn256>
+}
+
+impl Verifier<'_>
+{
+    pub fn new<'a>(
+        vp: &'a UnivariateKzgVerifierParam<Bn256>
+    ) -> Verifier<'a> {
+        Verifier { vp }
+    }
 
     pub fn verify(
         &self,
         proof: &Vec<u8>,
-        vp: &UnivariateKzgVerifierParam<Bn256>,
         z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
         phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
         t_comm_1: &UnivariateKzgCommitment<G1Affine>,
@@ -429,7 +441,7 @@ impl Prover<'_>
     ) -> bool {
         let scalar_0 = Fr::from(0 as u64);
         let scalar_1 = Fr::from(1 as u64);
-
+        let vp = self.vp;
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
 
         // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_i_comm_1.clone());
@@ -721,7 +733,8 @@ mod tests {
         // [X^(d-m+2)]2
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
 
-        prover.verify(&proof, &vp, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
+        let verifier = Verifier::new(&vp);
+        verifier.verify(&proof, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
 
         println!("Finished to verify: baloo");
 
