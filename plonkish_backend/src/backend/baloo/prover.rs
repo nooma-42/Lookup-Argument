@@ -728,6 +728,8 @@ mod tests {
         transcript.write_field_element(&Fr::from(2 as u64)).unwrap();
         transcript.write_field_element(&Fr::from(3 as u64)).unwrap();
 
+        let alpha: Fr = transcript.squeeze_challenge();
+
         let comm = <Pcs as PolynomialCommitmentScheme<Fr>>::commit(&pp, &poly).unwrap();
         println!("comm: {:?}", comm);
         println!("comm affine: {:?}", comm.clone().to_affine());
@@ -735,6 +737,8 @@ mod tests {
         let comm_1 = Pcs::commit_monomial(&pp, &poly.coeffs());
         println!("comm_1: {:?}", comm_1);
         assert_eq!(comm_1, comm);
+
+        let beta: Fr = transcript.squeeze_challenge();
 
         // g2
         let comm_2 = Pcs::commit_monomial_g2(&param, &poly.coeffs());
@@ -744,6 +748,8 @@ mod tests {
 
         let comm_table = Pcs::commit_and_write(&pp, &poly_table, &mut transcript).unwrap();
         println!("comm_table: {:?}", comm_table);
+
+        let zeta: Fr = transcript.squeeze_challenge();
 
         let proof = transcript.into_proof();
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
@@ -758,18 +764,26 @@ mod tests {
         println!("c: {:?}", c);
         assert_eq!(c, Fr::from(3 as u64));
 
-        let comm_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("comm_back: {:?}", comm_back);
+        let alpha_verifier: Fr = transcript.squeeze_challenge();
+        assert_eq!(alpha, alpha_verifier);
 
+        let comm_verifier = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("comm_verifier: {:?}", comm_verifier);
+
+        let beta_verifier: Fr = transcript.squeeze_challenge();
+        assert_eq!(beta, beta_verifier);
         // g2
         let comm_table_g2: G2Affine = transcript.read_commitment_g2().unwrap();
         println!("comm_table_g2: {:?}", comm_table_g2);
 
-        let comm_table_back = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("comm_table_back: {:?}", comm_table_back);
-        assert_eq!(comm, comm_back);
-        assert_eq!(comm_table, comm_table_back);
+        let comm_table_verifier = Pcs::read_commitment(&vp, &mut transcript).unwrap();
+        println!("comm_table_verifier: {:?}", comm_table_verifier);
+        assert_eq!(comm, comm_verifier);
+        assert_eq!(comm_table, comm_table_verifier);
         assert_eq!(comm_2.to_affine(), comm_table_g2);
+
+        let zeta_verifier: Fr = transcript.squeeze_challenge();
+        assert_eq!(zeta, zeta_verifier);
     }
 
 }
