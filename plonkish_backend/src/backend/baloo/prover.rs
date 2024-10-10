@@ -100,12 +100,13 @@ impl Prover<'_>
         print!("i_values: {:?}\n", i_values);
         let log_m = m.sqrt();
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
-
+        // cache all roots of unity
+        let v_roots_of_unity = (0..m).map(|i| v_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
         let h_i: Vec<_> = i_values.iter().map(|&i| {
             let i_as_u64 = i as u64;
             println!("i_as_u64: {:?}", i_as_u64);
-            v_root_of_unity.pow([i_as_u64])
+            v_roots_of_unity[i]
         }).collect();
         print!("h_i: {:?}\n", h_i);
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
@@ -210,7 +211,7 @@ impl Prover<'_>
             // col(i)
             let col_i = col_values[i];
             // ω^i
-            let v_root = v_root_of_unity.pow([i as u64]);
+            let v_root = v_roots_of_unity[i];
             // X - ω^i
             let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
             // ξ_i
@@ -251,7 +252,7 @@ impl Prover<'_>
             // col(i)
             let col_i = col_values[i];
             // ω^i
-            let v_root = v_root_of_unity.pow([i as u64]);
+            let v_root = v_roots_of_unity[i];
             // X - ω^i
             let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
             // ξ_i
