@@ -1,70 +1,42 @@
-
+use rand::rngs::OsRng;
+use std::cmp::max;
 use crate::{
-    backend::baloo::{BalooProverParam, BalooVerifierParam},
     pcs::PolynomialCommitmentScheme,
-    poly::Polynomial,
-    util::{
-        arithmetic::PrimeField,
-        test::std_rng,
-    },
-    poly::univariate::{UnivariateBasis, UnivariatePolynomial},
     Error,
 };
+use halo2_curves::bn256::Bn256;
+use crate::pcs::univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam};
 
-pub fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>>(
-    param: &Pcs::Param,
-    n: usize,
+type Pcs = UnivariateKzg<Bn256>;
+
+pub fn preprocess(
+    t: usize,
+    m: usize,
 ) -> Result<
     (
-        Pcs::ProverParam,
-        BalooVerifierParam<F, Pcs>,
-    ),
-    Error,
-    > {
-        // let n = 1 << circuit_info.k;
-        let mut rng = std_rng();
-        // let param = Pcs::setup(n, 1, &mut rng).unwrap();
-        let (pp, _) = Pcs::trim(&param, n, 1).unwrap();
+        UnivariateKzgParam<Bn256>,
+        UnivariateKzgProverParam<Bn256>,
+        UnivariateKzgVerifierParam<Bn256>,
+    ), Error>
+{
+    let mut rng = OsRng;
+    let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
+    let d = poly_size - 2;
+    let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+    let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
 
-        // todo
-        let z_h_poly = Pcs::Polynomial::rand(n, &mut rng);
-        // todo
-        let t_poly = Pcs::Polynomial::rand(n, &mut rng);
-        let z_h_comm_1 = Pcs::commit(&pp, &z_h_poly).unwrap();
-        let t_comm_1 = Pcs::commit(&pp, &t_poly).unwrap();
-        // Alternatively, if you know the number of elements you will store, you can use `with_capacity`
-        let mut commitments: Vec<Pcs::Commitment> = Vec::with_capacity(2); // Adjust the capacity as needed
-        commitments.push(z_h_comm_1);
-        commitments.push(t_comm_1);
-        let vp = BalooVerifierParam {
-            preprocess_comms: commitments,
-        };
-    Ok((pp, vp))
+    Ok((param, pp, vp))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        backend::baloo::{preprocessor::preprocess, BalooVerifierParam},
-        pcs::PolynomialCommitmentScheme,
-        util::{
-            arithmetic::PrimeField,
-            test::std_rng,
-        },
-    };
-    use crate::pcs::univariate::UnivariateKzg;
-    use halo2_curves::bn256::{Bn256, Fr}; // Use Fr for the field type
-
-    type Pcs = UnivariateKzg<Bn256>;
+    use crate::backend::baloo::preprocessor::preprocess;
 
     #[test]
     fn test_preprocess() {
-        let mut rng = std_rng();
-        let k = 10;
-        let n = 1 << k;
-        let param = Pcs::setup(n, 1, &mut rng).unwrap();
-        let (pp, vp) = preprocess::<Fr, Pcs>(&param, n).unwrap(); // Explicitly specify Fr for F
-
-        assert!(true);
+        let (param, pp, vp) = preprocess(10, 10).unwrap();
+        println!("param: {:?}", param);
+        println!("pp: {:?}", pp);
+        println!("vp: {:?}", vp);
     }
 }
