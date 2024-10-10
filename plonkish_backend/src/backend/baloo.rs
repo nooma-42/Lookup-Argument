@@ -1,7 +1,7 @@
 use rand::rngs::OsRng;
 use std::{fmt::Debug, marker::PhantomData};
 
-use halo2_curves::{bn256::{multi_miller_loop, pairing, Bn256, Fr, G1Affine, G2Affine, G2Prepared, Gt, G1, G2}, pairing::MillerLoopResult};
+use halo2_curves::{bn256::{ pairing, Bn256, Fr, G1Affine, G2Affine, G2Prepared, Gt, G1, G2}, pairing::MillerLoopResult};
 
 use crate::{
     poly::Polynomial,
@@ -19,33 +19,13 @@ use crate::{
     }
 };
 
-
 pub mod preprocessor;
 pub mod prover;
 pub mod verifier;
 pub mod util;
 
-#[derive(Clone, Debug)]
-pub struct BalooProverParam //<F, Pcs>
-// where
-//     F: PrimeField,
-//     Pcs: PolynomialCommitmentScheme<F>,
-{
-    pub(crate) num_vars: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct BalooVerifierParam<F, Pcs>
-where
-    F: PrimeField,
-    Pcs: PolynomialCommitmentScheme<F>,
-{
-    // [z_H_comm_1, t_comm_1]
-    pub(crate) preprocess_comms: Vec<Pcs::Commitment>,
-}
 use prover::Prover;
 use verifier::Verifier;
-
 
 #[cfg(test)]
 mod tests {
