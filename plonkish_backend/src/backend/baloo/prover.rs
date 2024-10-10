@@ -35,7 +35,7 @@ impl Prover<'_>
         param: &'a UnivariateKzgParam<Bn256>,
         pp: &'a UnivariateKzgProverParam<Bn256>
     ) -> Prover<'a> {
-        let d = 2_usize.pow(pp.k() as u32) - 2;
+        let d = (1 << pp.k()) - 2;
         Prover { table, param, pp, d }
     }
 
