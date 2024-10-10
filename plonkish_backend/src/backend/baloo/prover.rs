@@ -434,15 +434,8 @@ mod tests {
 
         let m = lookup.len();
         let t = table.len();
-
-        let mut rng = OsRng;
-
-        // Setup
-        let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
+        let poly_size = max(t, m).next_power_of_two() * 2;
         let d = poly_size - 2;
-        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
-        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
-        assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
         // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
@@ -453,6 +446,9 @@ mod tests {
         let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
         // [t(x)]1
         let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
+        // 1. setup
+        let (param, pp, vp) = preprocess(t, m).unwrap();
+        assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
         let prover = Prover::new(&table, &param, &pp);
 

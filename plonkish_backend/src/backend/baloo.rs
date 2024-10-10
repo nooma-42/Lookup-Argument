@@ -59,27 +59,24 @@ mod tests {
         let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
 
-        let scalar_0 = Fr::from(0 as u64);
-        let scalar_1 = Fr::from(1 as u64);
-
         let m = lookup.len();
         let t = table.len();
-
-        let mut rng = OsRng;
-
-        // Setup
-        let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
+        let poly_size = max(t, m).next_power_of_two() * 2;
         let d = poly_size - 2;
-        let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
-        let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
+
+        // 1. setup
+        let (param, pp, vp) = preprocess(t, m).unwrap();
         assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
+        // 2. generate proof
         let prover = Prover::new(&table, &param, &pp);
-
-        // generate proof
         let proof = prover.prove(&lookup);
         println!("proof: {:?}", proof);
 
+        let scalar_0 = Fr::from(0 as u64);
+        let scalar_1 = Fr::from(1 as u64);
+
+        // 3.1 prepare for verifier
         // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
@@ -114,6 +111,7 @@ mod tests {
         // [X^(d-m+2)]2
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
 
+        // 3.2 verifier to verify
         let verifier = Verifier::new(&vp);
         verifier.verify(
             &proof,
@@ -128,7 +126,6 @@ mod tests {
         );
 
         println!("Finished to verify: baloo");
-
     }
 
 }
