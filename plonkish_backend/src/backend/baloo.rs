@@ -74,6 +74,12 @@ mod tests {
         let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
         assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
+        let prover = Prover::new(&table, &param, &pp);
+
+        // generate proof
+        let proof = prover.prove(&lookup);
+        println!("proof: {:?}", proof);
+
         // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
         let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
@@ -83,12 +89,6 @@ mod tests {
         let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
         // [t(x)]1
         let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
-
-        let prover = Prover::new(&table, &param, &pp);
-
-        // generate proof
-        let proof = prover.prove(&lookup);
-        println!("proof: {:?}", proof);
 
         // φ(x)
         let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
@@ -115,7 +115,17 @@ mod tests {
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
 
         let verifier = Verifier::new(&vp);
-        verifier.verify(&proof, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
+        verifier.verify(
+            &proof,
+            &t_comm_1,
+            &z_h_comm_1,
+            &phi_comm_1,
+            &x_m_exponent_poly_comm_1,
+            &x_exponent_poly_comm_2,
+            &x_exponent_poly_2_comm_1,
+            &x_exponent_poly_2_comm_2,
+            m
+        );
 
         println!("Finished to verify: baloo");
 

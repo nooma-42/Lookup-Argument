@@ -463,7 +463,6 @@ mod tests {
         // φ(x)
         let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
         let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
-        // todo: cached all [x^s]1, [x^s]2?
         // X^m
         let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
         // [X^m]1
@@ -485,7 +484,17 @@ mod tests {
         let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
 
         let verifier = Verifier::new(&vp);
-        verifier.verify(&proof, &z_h_comm_1, &phi_comm_1, &t_comm_1, &x_m_exponent_poly_comm_1, &x_exponent_poly_comm_2, &x_exponent_poly_2_comm_1, &x_exponent_poly_2_comm_2, m);
+        verifier.verify(
+            &proof,
+            &t_comm_1,
+            &z_h_comm_1,
+            &phi_comm_1,
+            &x_m_exponent_poly_comm_1,
+            &x_exponent_poly_comm_2,
+            &x_exponent_poly_2_comm_1,
+            &x_exponent_poly_2_comm_2,
+            m
+        );
 
         println!("Finished to verify: baloo");
 

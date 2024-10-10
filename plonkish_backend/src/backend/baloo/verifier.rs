@@ -36,9 +36,9 @@ impl Verifier<'_>
     pub fn verify(
         &self,
         proof: &Vec<u8>,
+        t_comm_1: &UnivariateKzgCommitment<G1Affine>,
         z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
         phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
-        t_comm_1: &UnivariateKzgCommitment<G1Affine>,
         x_m_exponent_poly_comm_1: &UnivariateKzgCommitment<G1Affine>,
         x_exponent_poly_comm_2: &UnivariateKzgCommitment<G2Affine>,
         x_exponent_poly_2_comm_1: &UnivariateKzgCommitment<G1Affine>,
