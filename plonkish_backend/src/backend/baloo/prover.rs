@@ -112,13 +112,11 @@ impl Prover<'_>
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
         // cache all roots of unity
         let log_t = log_2(t);
+        let t_root_of_unity = root_of_unity::<Fr>(log_t);
+        let t_roots_of_unity = (0..t).map(|i| t_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
         let v_roots_of_unity = (0..m).map(|i| v_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
-        let h_i: Vec<_> = i_values.iter().map(|&i| {
-            let i_as_u64 = i as u64;
-            println!("i_as_u64: {:?}", i_as_u64);
-            v_roots_of_unity[i]
-        }).collect();
+        let h_i: Vec<_> = i_values.iter().map(|&i| t_roots_of_unity[i]).collect();
         print!("h_i: {:?}\n", h_i);
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
         // refer to barycentric_weights in arithmetic.rs
@@ -127,9 +125,14 @@ impl Prover<'_>
         let t_i_poly = lagrange_interp(&h_i, &t_values_from_lookup_set);
 
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
-        assert_eq!(z_i_poly.evaluate(&h_i[0]), Fr::zero());
-        assert_eq!(z_i_poly.evaluate(&h_i[1]), Fr::zero());
-        assert_eq!(z_i_poly.evaluate(&h_i[2]), Fr::zero());
+        // sanity check
+        for (i, &root) in h_i.iter().enumerate() {
+            println!("i: {:?}", i);
+            println!("root: {:?}", root);
+            assert_eq!(z_i_poly.evaluate(&root), Fr::zero());
+            assert_eq!(t_i_poly.evaluate(&root), t_values_from_lookup_set[i]);
+            assert_eq!(t_i_poly.evaluate(&root), t_poly.evaluate(&root));
+        }
 
         let mut col_values = Vec::new();
         let mut v_values = Vec::new();
@@ -384,7 +387,6 @@ impl Prover<'_>
 
         // calculate barycentric_weights
         let bc_weights = barycentric_weights(&h_i);
-        let t_root_of_unity = root_of_unity::<Fr>(log_t);
 
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
         let w5_poly_direct = &(&t_poly - &t_i_poly) / &z_i_poly;
