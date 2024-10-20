@@ -443,8 +443,7 @@ mod tests {
         let m = lookup.len();
         let t = table.len();
         // 1. setup
-        let (param, pp, vp) = preprocess(t, m).unwrap();
-
+        let (param, pp, _) = preprocess(t, m).unwrap();
         // 2. generate proof
         let prover = Prover::new(&table, &param, &pp);
         let proof = prover.prove(&lookup);
