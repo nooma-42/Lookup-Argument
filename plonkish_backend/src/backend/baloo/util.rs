@@ -20,7 +20,7 @@ pub fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> Univar
     let mut sum = UnivariatePolynomial::monomial(vec![Fr::zero()]);
     for (idx, h_i) in h_i_values.iter().enumerate() {
         for (jdx, h_j) in h_i_values.iter().enumerate() {
-            if jdx == idx {
+            if h_i == h_j {
                 continue;
             }
             bary_centric_weights[idx] = bary_centric_weights[idx] * (h_i - h_j).invert().unwrap();
