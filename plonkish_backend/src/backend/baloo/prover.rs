@@ -437,9 +437,8 @@ mod tests {
 
     #[test]
     fn test_baloo() {
-        let lookup = vec![Fr::from(3), Fr::from(2), Fr::from(3), Fr::from(4)];
-        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
-
+        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
+        let lookup = vec![Fr::from(4), Fr::from(3), Fr::from(5), Fr::from(2)];
         let m = lookup.len();
         let t = table.len();
         // 1. setup
