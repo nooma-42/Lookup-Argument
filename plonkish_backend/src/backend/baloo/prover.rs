@@ -21,6 +21,16 @@ use crate::{
 
 type Pcs = UnivariateKzg<Bn256>;
 
+pub fn log_2(n: usize) -> usize {
+    assert_ne!(n, 0);
+
+    if n.is_power_of_two() {
+      (1usize.leading_zeros() - n.leading_zeros()) as usize
+    } else {
+      (0usize.leading_zeros() - n.leading_zeros()) as usize
+    }
+}
+
 pub struct Prover<'b> {
     table: &'b Vec<Fr>,
     param: &'b UnivariateKzgParam<Bn256>,
@@ -98,9 +108,10 @@ impl Prover<'_>
         // I: the index of t_values_from_lookup elements in sub table t_I
         let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
         print!("i_values: {:?}\n", i_values);
-        let log_m = m.sqrt();
+        let log_m = log_2(m);
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
         // cache all roots of unity
+        let log_t = log_2(t);
         let v_roots_of_unity = (0..m).map(|i| v_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
         let h_i: Vec<_> = i_values.iter().map(|&i| {
@@ -373,7 +384,6 @@ impl Prover<'_>
 
         // calculate barycentric_weights
         let bc_weights = barycentric_weights(&h_i);
-        let log_t = t.sqrt();
         let t_root_of_unity = root_of_unity::<Fr>(log_t);
 
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
