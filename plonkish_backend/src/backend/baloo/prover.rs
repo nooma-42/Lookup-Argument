@@ -20,6 +20,7 @@ use crate::{
 };
 
 type Pcs = UnivariateKzg<Bn256>;
+type Scalar = Fr;
 
 pub fn log_2(n: usize) -> usize {
     assert_ne!(n, 0);
@@ -29,6 +30,12 @@ pub fn log_2(n: usize) -> usize {
     } else {
       (0usize.leading_zeros() - n.leading_zeros()) as usize
     }
+}
+
+pub fn pow_2(n: usize) -> usize {
+    // assert_ne!(n, 0);
+    let p = (2 as u32).pow(n as u32);
+    p as usize
 }
 
 pub struct Prover<'b> {
@@ -47,6 +54,239 @@ impl Prover<'_>
     ) -> Prover<'a> {
         let d = (1 << pp.k()) - 2;
         Prover { table, param, pp, d }
+    }
+
+    /// Compute polynomial multilication naively in O(n^2)
+    fn naive_multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
+
+        let mut c =vec![Scalar::zero(); coeffs0.len() + coeffs1.len() - 1];
+
+        for i in 0..coeffs0.len() {
+            for j in 0..coeffs1.len() {
+                c[i + j] += coeffs0[i] * coeffs1[j];
+            }
+        }
+        c
+    }
+
+    /// Compute polynomial multilication wrapper
+    pub fn multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
+        // TODO: to select different multiplication algs based
+        // on the degree of polynomials.
+        Self::naive_multiplication(coeffs0, coeffs1)
+    }
+
+    fn eval_rec(tree: &Vec<Vec<Vec<Scalar>>>, k: usize, base: usize, f: &[Scalar], u:&[Scalar]) -> Vec<Scalar> {
+        let n = u.len();
+        // println!("eval_rec> k={}, base={}, n={}", k, base, n);
+        // println!("f={}", scalar_vector_to_string(&f.to_vec()));
+        // println!("u={}", scalar_vector_to_string(&u.to_vec()));
+
+        if k == 0 {
+            return f.to_vec();
+        }
+
+        // println!("division> k-1={}, left={}, right={}, n={}", k-1, base+0, base+1, n);
+        let (q0, r0) = Self::division(f, &tree[k-1][2*base + 0]);
+        let (q1, r1) = Self::division(f, &tree[k-1][2*base + 1]);
+
+        let (u0, u1) = u.split_at(n/2);
+        // println!("u0={}", scalar_vector_to_string(&u0.to_vec()));
+        // println!("u1={}", scalar_vector_to_string(&u1.to_vec()));
+        let mut rs0: Vec<Scalar> = Self::eval_rec(tree, k-1, base * 2 + 0, &r0, &u0);
+        let mut rs1: Vec<Scalar> = Self::eval_rec(tree, k-1, base * 2 + 1, &r1, &u1);
+        rs0.append(&mut rs1);
+        rs0
+    }
+
+    // TODO: https://en.wikipedia.org/wiki/Synthetic_division
+    fn division(dividend: &[Scalar], divisor: &[Scalar]) -> (Vec<Scalar>, Vec<Scalar>) {
+
+        // Important: if dividend.len() < divisor.len(), then the quotient is zero and
+        // the remainder is the dividend.
+        if dividend.len() < divisor.len() {
+            return (vec![Scalar::zero()], dividend.to_vec());
+        }
+
+        let mut quotient = vec![Scalar::zero(); dividend.len() - divisor.len() + 1];
+        let mut remainder = dividend.to_vec();
+
+        for i in (0..quotient.len()).rev() {
+            quotient[i] = remainder[i + divisor.len() - 1] * divisor[divisor.len() - 1].invert().unwrap();
+            for j in 0..divisor.len() {
+                remainder[i + j] -= quotient[i] * divisor[j];
+            }
+        }
+
+        // Remove leading zeros
+        while remainder.len() > 1 && remainder[remainder.len() - 1] == Scalar::zero() {
+            remainder.pop();
+        }
+
+        (quotient, remainder)
+    }
+
+    /// Compute subproduct tree in O(M(n) * log(n)) time, where O(M(n)) is the
+    /// asymptotic complexity of multiplication, and equal to O(nlog(n)) if using
+    /// FFT-based fast multiplication.
+    ///
+    /// Return a vector of levels, each level is a vector of polynomials,
+    /// and each polynomial is a vector of coefficients.
+    fn contruct_subproduct_tree(domain: &[Scalar]) -> Vec<Vec<Vec<Scalar>>> {
+        let n = domain.len();
+        assert!(n.is_power_of_two());
+
+        let mut tree = Vec::new();
+        let mut level = Vec::new();
+        for u in domain.iter() {
+            level.push(vec![-*u, Scalar::one()]);
+        }
+        tree.push(level.clone());
+
+        for k in 0..log_2(n) {
+            let mut new_level = Vec::new();
+            for i in 0..(n >> (k + 1)) {
+                let left = &level[2*i];
+                let right = &level[2*i+1];
+                let poly = Self::multiplication(left, right);
+                new_level.push(poly);
+            }
+            tree.push(new_level.clone());
+            level = new_level;
+        }
+        assert_eq!(tree.len(), log_2(n)+1);
+
+        // for i in 0..tree.len() {
+        //     println!("tree[{}]=", i);
+        //     let level = &tree[i];
+        //     for j in 0..level.len() {
+        //         println!("tree[{}][{}]={}", i, j, scalar_vector_to_string(&level[j]));
+        //     }
+        // }
+
+        tree
+    }
+
+    /// Compute f(X) = ∑i c_i * z(X) / (X - u_i) in O(M(n) * log(n)) time
+    ///
+    /// The algorithm is the core of fast interpolation,
+    /// from Modern Computer Algebra, Algorithm 10.9, "Linear Combination for linear moduli".
+    ///
+    /// # Arguments
+    ///
+    /// - k: `log(n)`
+    /// - base: the base index of the subproduct tree
+    /// - c: a vector of coefficients of size n
+    /// - u: a vector of points of size n
+    ///
+    /// return: a polynomial in coefficients
+    ///
+    /// # Example
+    ///
+    /// TODO: I use this alg. to compute `z'(X)`. Is there
+    /// any faster algorithm? It is mentioned in [TAB20] that `z'(X)`
+    /// can be computed in O(n) time.
+    ///
+    fn linear_combination_linear_moduli_fix(
+        tree: &Vec<Vec<Vec<Scalar>>>,
+        k: usize,
+        base: usize,
+        c: &[Scalar],
+        u: &[Scalar],
+    ) -> Vec<Scalar> {
+        let n = u.len();
+
+        // println!("lc_fix> k={}, base={}, n={}", k, base, n);
+        // println!("c={}", scalar_vector_to_string(&c.to_vec()));
+        // println!("u={}", scalar_vector_to_string(&u.to_vec()));
+
+        if k == 0 {
+            assert_eq!(c.len(), 1);
+            assert_eq!(u.len(), 1);
+            return vec![c[0]];
+        }
+
+        assert!(n.is_power_of_two());
+        assert_eq!(n, pow_2(k));
+
+
+        let node0 = &tree[k-1][2*base + 0];
+        let node1 = &tree[k-1][2*base + 1];
+
+        let (c0, c1) = c.split_at(n/2);
+        let (u0, u1) = u.split_at(n/2);
+
+        let r0 = Self::linear_combination_linear_moduli_fix(&tree, k-1, 2*base + 0, c0, u0);
+        let r1 = Self::linear_combination_linear_moduli_fix(&tree, k-1, 2*base + 1, c1, u1);
+
+        let poly0 = UnivariatePolynomial::monomial(Self::multiplication(&node1, &r0));
+        let poly1 = UnivariatePolynomial::monomial(Self::multiplication(&node0, &r1));
+        (&poly0 + &poly1).coeffs().to_vec()
+    }
+
+    /// Polynomial interpolation in O(M(n) * log(n)) time.
+    /// If O(M(n)) is O(nlog(n)) by using fast polynomial multiplication,
+    /// then the asymtotics is O(nlog^2(n)).
+    ///
+    /// # Arguments
+    ///
+    /// - evals: a vector of evaluations of size n
+    /// - domain: a domain of size n, n must be a power of 2
+    ///
+    /// # Return
+    ///
+    /// - a polynomial (coefficients) of degree (n-1)
+    ///
+    pub fn compute_coeffs_from_evals_fast_2(evals: &[Scalar], domain: &[Scalar]) -> Vec<Scalar> {
+        let n = domain.len();
+        assert!(n.is_power_of_two());
+        assert_eq!(evals.len(), n);
+
+        // 1. building up subproduct tree
+
+        let tree = Self::contruct_subproduct_tree(domain);
+        println!("tree={:?}", tree);
+        // 2. construct a polynomial with linear moduli
+
+        let f_derivative = Self::linear_combination_linear_moduli_fix(&tree,
+            log_2(n), 0, &vec![Scalar::one(); n], domain);
+        // println!("f_derivative={}", scalar_vector_to_string(&f_derivative));
+        println!("f_derivative={:?}", f_derivative);
+
+        let f_derivative_at_u =  Self::eval_rec(&tree, log_2(n), 0, &f_derivative, domain);
+
+        // println!("f_derivative_at_u={}", scalar_vector_to_string(&f_derivative_at_u));
+        println!("f_derivative_at_u={:?}", f_derivative_at_u);
+
+        let mut bary_centric_weights: Vec<Scalar> = f_derivative_at_u.iter().map(|e| e.invert().unwrap()).collect();
+
+        let mut bary_centric_weights2: Vec<Scalar> = f_derivative_at_u.iter().map(|e| {
+            println!("e: {:?}", e);
+            e.invert().unwrap()
+        }).collect();
+        assert_eq!(bary_centric_weights, bary_centric_weights2);
+        // println!("bary_centric_weights={}", scalar_vector_to_string(&bary_centric_weights));
+        // println!("bary_centric_weights2={}", scalar_vector_to_string(&UniPolynomial::barycentric_weights(domain)));
+
+        bary_centric_weights.iter_mut().enumerate().for_each(|(i, w)| *w = *w * evals[i]);
+
+        // println!("before linear_combination_linear_moduli_fix");
+        let f = Self::linear_combination_linear_moduli_fix(&tree, log_2(n), 0, &bary_centric_weights, domain);
+
+
+        // {
+        //     let z_poly = UniPolynomial::from_coeffs(&tree[log_2(n)][0]);
+        //     println!("z_poly={}", scalar_vector_to_string(&z_poly.coeffs));
+        //     let mut g = Self::zero();
+        //     for i in 0..n {
+        //         let (gi, _) = z_poly.div_by_linear_divisor(&domain[i]);
+        //         g = Self::add(&g, &gi, false);
+        //     }
+        //     println!("g={}", scalar_vector_to_string(&g.coeffs));
+        // }
+
+        f
+
     }
 
     pub fn prove(
@@ -122,8 +362,9 @@ impl Prover<'_>
         // refer to barycentric_weights in arithmetic.rs
         let t_values_from_lookup_set : Vec<Fr>= t_values_from_lookup.clone().into_iter().collect();
         print!("t_values_from_lookup_set: {:?}\n", t_values_from_lookup_set);
-        let t_i_poly = lagrange_interp(&h_i, &t_values_from_lookup_set);
-
+        // let t_i_poly = lagrange_interp(&h_i, &t_values_from_lookup_set);
+        let t_i_poly_coeffs = Self::compute_coeffs_from_evals_fast_2(&t_values_from_lookup_set, &h_i);
+        let t_i_poly = UnivariatePolynomial::monomial(t_i_poly_coeffs);
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         // sanity check
         for (i, &root) in h_i.iter().enumerate() {
