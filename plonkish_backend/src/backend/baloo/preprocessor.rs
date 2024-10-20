@@ -21,7 +21,6 @@ pub fn preprocess(
 {
     let mut rng = OsRng;
     let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
-    let d = poly_size - 2;
     let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
     let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
 

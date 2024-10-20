@@ -422,8 +422,6 @@ mod tests {
     use halo2_curves::bn256::Fr;
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
-    use std::cmp::max;
-    use crate::backend::baloo::verifier::Verifier;
 
     #[test]
     fn test_baloo() {
@@ -432,17 +430,12 @@ mod tests {
 
         let m = lookup.len();
         let t = table.len();
-        let poly_size = max(t, m).next_power_of_two() * 2;
-        let d = poly_size - 2;
-
         // 1. setup
         let (param, pp, vp) = preprocess(t, m).unwrap();
-        assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
 
         // 2. generate proof
         let prover = Prover::new(&table, &param, &pp);
         let proof = prover.prove(&lookup);
-        println!("proof: {:?}", proof);
     }
 
     #[test]
@@ -571,5 +564,4 @@ mod tests {
         let zeta_verifier: Fr = transcript.squeeze_challenge();
         assert_eq!(zeta, zeta_verifier);
     }
-
 }
