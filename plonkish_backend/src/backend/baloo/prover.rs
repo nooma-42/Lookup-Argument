@@ -14,7 +14,7 @@ use crate::{
         univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
     },
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
+        arithmetic::{Field, PrimeField, root_of_unity, barycentric_weights},
         transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
     }
 };
