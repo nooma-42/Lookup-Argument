@@ -29,7 +29,7 @@ pub fn preprocess(
 
 #[cfg(test)]
 mod tests {
-    use crate::backend::baloo::preprocessor::preprocess;
+    use crate::backend::cq::preprocessor::preprocess;
 
     #[test]
     fn test_preprocess() {

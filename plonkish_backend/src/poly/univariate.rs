@@ -629,6 +629,7 @@ mod tests {
 
     #[test]
     fn test_scalar_add() {
+        // monomial addition
         let p1 = UnivariatePolynomial::monomial(vec![Fr::from(1), Fr::from(2), Fr::from(3)]);
         let s = Fr::from(3);
         let p2 = p1.clone() + s;
@@ -636,7 +637,7 @@ mod tests {
         assert_eq!(p1.evaluate(&Fr::from(1)) + s, p2.evaluate(&Fr::from(1)));
         assert_eq!(p1.evaluate(&Fr::from(2)) + s, p2.evaluate(&Fr::from(2)));
         assert_eq!(p1.evaluate(&Fr::from(3)) + s, p2.evaluate(&Fr::from(3)));
-
+        // lagrange addition
         let p3 = UnivariatePolynomial::lagrange(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
         let p4 = p3.clone() + s;
         assert_eq!(p4.coeffs(), &[Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
