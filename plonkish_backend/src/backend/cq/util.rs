@@ -1,32 +1,7 @@
-use std::ops::{Add};
-use std::fmt;
-use generic_array::typenum::False;
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul};
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2, Fq};
-use crate::{
-    poly::{Polynomial, univariate::UnivariatePolynomial},
-    backend::baloo::{
-      util::{lagrange_interp, multi_pairing},
-    },
-    backend::cq::{
-        preprocessor::preprocess,
-    },
-    pcs::{
-        PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
-    },
-    util::{
-        arithmetic::{Field, PrimeField, root_of_unity, barycentric_weights},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
-    }
-};
+use halo2_curves::bn256::{Fr, G1Affine, Fq};
+use crate::util::arithmetic::{Field, root_of_unity};
 
-type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
-
 
 fn is_power_of_two(n: usize) -> bool {
     (n & (n - 1)) == 0 && n != 0
@@ -132,6 +107,7 @@ pub fn ec_ifft(values: &mut Vec<G1Affine>) -> Vec<G1Affine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::cq::preprocessor::preprocess;
 
     #[test]
     fn test_fft() {

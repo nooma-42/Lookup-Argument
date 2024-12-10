@@ -1,15 +1,12 @@
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul};
 use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
-    backend::baloo::{
-      preprocessor::preprocess, util::{lagrange_interp, multi_pairing}
-    }, pcs::{
-        univariate::{UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam}, Additive, PolynomialCommitmentScheme
-    }, poly::{univariate::UnivariatePolynomial, Polynomial}, util::{
-        arithmetic::{barycentric_weights, root_of_unity, variable_base_msm, Field, PrimeField},
-        transcript::{FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript, TranscriptRead, TranscriptWrite},
+    backend::baloo::util::multi_pairing, 
+    pcs::{
+        univariate::{UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgVerifierParam}, PolynomialCommitmentScheme
+    }, 
+    util::{
+        arithmetic::{ variable_base_msm, Field},
+        transcript::{FieldTranscript, FieldTranscriptRead, InMemoryTranscript, Keccak256Transcript, TranscriptRead},
     }
 };
 

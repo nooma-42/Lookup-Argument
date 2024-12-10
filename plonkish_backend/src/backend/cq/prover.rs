@@ -1,24 +1,15 @@
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul, collections::HashMap, collections::hash_map::Entry};
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2, Fq};
+use std::{collections::HashMap, collections::hash_map::Entry};
+use halo2_curves::bn256::{Bn256, Fr, G1Affine, Fq};
 use crate::{
-    poly::{Polynomial, univariate::UnivariatePolynomial},
-    backend::baloo::{
-      util::{lagrange_interp, multi_pairing},
-    },
-    backend::cq::{
-        util::log_2,
-        preprocessor::preprocess,
-    },
+    poly::univariate::UnivariatePolynomial,
+    backend::cq::util::log_2,
     pcs::{
         PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
+        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgCommitment},
     },
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
+        arithmetic::{Field, root_of_unity},
+        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptWrite},
     }
 };
 
@@ -334,11 +325,10 @@ impl Prover<'_> {
 mod tests {
     use super::*;
     use halo2_curves::bn256::Fr;
-    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
-    type Pcs = UnivariateKzg<Bn256>;
-
+    use crate::backend::cq::preprocessor::preprocess;
+    
     #[test]
-    fn test_cq() {
+    fn test_prove() {
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         let lookup = vec![Fr::from(1), Fr::from(2), Fr::from(1), Fr::from(3)];
         let m = lookup.len();
@@ -346,11 +336,9 @@ mod tests {
         // 1. setup
         let (param, pp, vp, q_t_comm_poly_coeffs) = preprocess(t, m, &table).unwrap();
 
-        // println!("param: {:?}\n", param);
-        // println!("pp: {:?}", pp);
-
         // 2. generate proof
         let prover = Prover::new(&table, &param, &pp);
         let proof = prover.prove(&lookup, &q_t_comm_poly_coeffs);
+        println!("proof: {:?}", proof);
     }
 }

@@ -45,7 +45,6 @@ fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1Affine> {
     let mut first_col = coeffs.to_vec();
     // [1, 2, 3, 4] -> [0, 2, 3, 4]
     first_col[0] = Scalar::from(0);
-    // println!("first_col: {:?}", first_col);
 
     // get first column of circulant matrix in 2n size
     // 1. padding 0
@@ -54,7 +53,6 @@ fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1Affine> {
     // 2. roll by 1 to right
     // [0, 0, 0, 0, 0, 2, 3, 4] -> [4, 0, 0, 0, 0, 0, 2, 3]
     first_col.rotate_right(1);
-    // println!("first_col: {:?}", first_col);
     
 
     // inverse srs: delete last one then inverse
@@ -66,7 +64,6 @@ fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1Affine> {
     // padding n 0s to the end
     let ec_neutral_vals = vec![group1_zero; n];
     inv_powers_of_x.extend(ec_neutral_vals);
-    // println!("inv_powers_of_x: {:?}", inv_powers_of_x);
 
     
     // We have circulant matrix C, C = F_inv * diag(F * first_col) * F
