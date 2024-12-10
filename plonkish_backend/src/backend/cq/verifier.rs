@@ -1,21 +1,12 @@
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul};
 use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
-    poly::{Polynomial, univariate::UnivariatePolynomial},
-    backend::baloo::{
-      util::{lagrange_interp, multi_pairing},
-      preprocessor::preprocess,
-    },
+    backend::baloo::util::multi_pairing, 
     pcs::{
-        PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
-    },
+        univariate::{UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgVerifierParam}, PolynomialCommitmentScheme
+    }, 
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
+        arithmetic::{ variable_base_msm, Field},
+        transcript::{FieldTranscript, FieldTranscriptRead, InMemoryTranscript, Keccak256Transcript, TranscriptRead},
     }
 };
 
@@ -59,8 +50,8 @@ impl Verifier<'_>
         let a_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("a_comm_1: {:?}", a_comm_1);
 
-        let q_a_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("q_a_comm_1: {:?}", q_a_comm_1);
+        let q_a_comm_1_fk: G1Affine = transcript.read_commitment().unwrap();
+        println!("q_a_comm_1_fk: {:?}", q_a_comm_1_fk);
 
         let b_0_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
         println!("b_0_comm_1: {:?}", b_0_comm_1);
@@ -115,7 +106,7 @@ impl Verifier<'_>
             &[m_comm_1.clone().to_affine(), a_comm_1.clone().to_affine()],
         ).into(); 
         let a_check_lhs = pairing(&a_comm_1.clone().to_affine(), &t_comm_2.clone().to_affine());
-        let a_check_pairing_g1_terms = vec![q_a_comm_1.clone().to_affine(), comb];
+        let a_check_pairing_g1_terms = vec![q_a_comm_1_fk, comb];
         let a_check_pairing_g2_terms = vec![z_v_comm_2.clone().to_affine(), g2_affine];
         let a_check_rhs = multi_pairing(&a_check_pairing_g1_terms, &a_check_pairing_g2_terms);
         // println!("a_check_lhs: {:?}", a_check_lhs);
