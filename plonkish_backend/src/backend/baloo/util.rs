@@ -45,6 +45,23 @@ pub fn multi_pairing(g1: &[G1Affine], g2: &[G2Affine]) -> Gt {
     u.final_exponentiation()
 }
 
+pub fn log_2(n: usize) -> usize {
+    assert_ne!(n, 0);
+
+    if n.is_power_of_two() {
+      (1usize.leading_zeros() - n.leading_zeros()) as usize
+    } else {
+      (0usize.leading_zeros() - n.leading_zeros()) as usize
+    }
+}
+
+pub fn pow_2(n: usize) -> usize {
+    // assert_ne!(n, 0);
+    let p = (2 as u32).pow(n as u32);
+    p as usize
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

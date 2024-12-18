@@ -5,7 +5,7 @@ use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
     poly::{Polynomial, univariate::UnivariatePolynomial},
     backend::baloo::{
-      util::{lagrange_interp, multi_pairing},
+      util::{multi_pairing, log_2},
       preprocessor::preprocess,
     },
     pcs::{
@@ -125,7 +125,7 @@ impl Verifier<'_>
             .collect();
         assert_eq!(z_v_values.len(), m + 1);
 
-        let log_m = m.sqrt();
+        let log_m = log_2(m);
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
         // X^m - 1
         let z_v_poly = UnivariatePolynomial::monomial(z_v_values);

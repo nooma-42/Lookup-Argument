@@ -5,7 +5,7 @@ use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
     poly::{Polynomial, univariate::UnivariatePolynomial},
     backend::baloo::{
-      util::{lagrange_interp, multi_pairing},
+      util::{lagrange_interp, multi_pairing, log_2, pow_2},
       preprocessor::preprocess,
     },
     pcs::{
@@ -21,22 +21,6 @@ use crate::{
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
-
-pub fn log_2(n: usize) -> usize {
-    assert_ne!(n, 0);
-
-    if n.is_power_of_two() {
-      (1usize.leading_zeros() - n.leading_zeros()) as usize
-    } else {
-      (0usize.leading_zeros() - n.leading_zeros()) as usize
-    }
-}
-
-pub fn pow_2(n: usize) -> usize {
-    // assert_ne!(n, 0);
-    let p = (2 as u32).pow(n as u32);
-    p as usize
-}
 
 pub struct Prover<'b> {
     table: &'b Vec<Fr>,
