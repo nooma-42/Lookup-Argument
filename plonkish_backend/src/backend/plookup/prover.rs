@@ -1,3 +1,5 @@
+use std::ops::Div;
+
 use halo2_curves::ff::WithSmallOrderMulGroup;
 
 use crate::{
@@ -82,7 +84,6 @@ pub(super) fn compute_quotient_polynomial<F: PrimeField+WithSmallOrderMulGroup<3
     delta: &F,
     t: &UnivariatePolynomial<F>,
     f: &UnivariatePolynomial<F>,
-    s: &UnivariatePolynomial<F>,
     h1: &UnivariatePolynomial<F>,
     h2: &UnivariatePolynomial<F>,
     z: &UnivariatePolynomial<F>,
@@ -111,19 +112,41 @@ pub(super) fn compute_quotient_polynomial<F: PrimeField+WithSmallOrderMulGroup<3
     };
     let poly_c = &ln_poly * &(h1 - h2.shift(1).ifft());
     let poly_d = &ln_poly * &z_minus_1;
-    aggregate(delta, vec![poly_a, poly_b, poly_c, poly_d])
+    let agg = aggregate_poly(delta, vec![&poly_a, &poly_b, &poly_c, &poly_d]);
+    let vanish = { // x^n - 1
+        let mut coeffs = vec![F::ZERO; n+1];
+        coeffs[0] = -F::ONE;
+        coeffs[n] = F::ONE;
+        UnivariatePolynomial::monomial(coeffs)
+    };
+    agg.div(&vanish)
 }
 
-fn aggregate<F: PrimeField>(
+pub(super) fn aggregate_poly<F: PrimeField>(
     scalar: &F,
-    polys: Vec<UnivariatePolynomial<F>>,
+    polys: Vec<&UnivariatePolynomial<F>>,
 ) -> UnivariatePolynomial<F> {
     assert!(polys.len()>0);
 
     let mut result = polys[0].clone();
     let mut power = scalar.clone();
     for poly in polys[1..].iter() {
-        result += poly * power;
+        result += *poly * power;
+        power *= scalar;
+    }
+    result
+}
+
+pub(super) fn aggregate_field<F: PrimeField>(
+    scalar: &F,
+    nums: Vec<&F>,
+) -> F {
+    assert!(nums.len()>0);
+
+    let mut result = nums[0].clone();
+    let mut power = scalar.clone();
+    for num in nums[1..].iter() {
+        result += **num * power;
         power *= scalar;
     }
     result
