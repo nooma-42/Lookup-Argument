@@ -1,6 +1,6 @@
 use halo2_proofs::transcript;
 use rand::{rngs::OsRng, RngCore};
-use std::{fmt::Debug, hash::Hash, marker::PhantomData};
+use std::{fmt::Debug, hash::Hash, marker::PhantomData, ops::Div};
 
 use halo2_curves::{bn256::Bn256, ff::WithSmallOrderMulGroup};
 
@@ -8,7 +8,7 @@ use crate::{
     backend::{
         plookup::{
             preprocessor::preprocess,
-            prover::{sorted_by_table, compute_inner_polynomial, compute_quotient_polynomial},
+            prover::{sorted_by_table, compute_inner_polynomial, compute_quotient_polynomial, aggregate_poly, aggregate_field},
         },
         PlonkishBackend, PlonkishCircuit, PlonkishCircuitInfo,
     },
@@ -55,7 +55,6 @@ where
     // pub(crate) preprocess_comms: Vec<Pcs::Commitment>,
 }
 
-// Todo: use PlonkishCircuitInfo instead
 #[derive(Clone, Debug)]
 pub struct PlookupInfo<F> {
     k: u32,
@@ -86,71 +85,98 @@ where
     fn prove(
         pp: PlookupProverParam<F, Pcs>,
         info: &PlookupInfo<F>,
-        transcript: &mut impl TranscriptWrite<Pcs::CommitmentChunk, F>,
+        transcript: &mut (impl TranscriptWrite<Pcs::CommitmentChunk, F> + InMemoryTranscript),
     ) -> Result<(), Error> {
         let order = 1 << info.k;
         let table = info.table.clone();
-        let table_len = table.len();
-        assert_eq!(order, table_len);
+        assert_eq!(table.len(), order);
         let mut witness = info.witness.clone();
-        let witness_len = witness.len();
-        assert!(witness_len < table_len);
-        // pad witness to length table_len-1
-        let last = witness[witness_len-1];
-        while witness.len() < table_len-1 {
+        assert!(witness.len() < order);
+
+        // round 1
+        // pad witness to length order-1
+        let last = witness[witness.len()-1];
+        while witness.len() < order-1 {
             witness.push(last);
         }
         let s = sorted_by_table(&table, &witness);
-        let h1 = {
-            let mut ret: Vec<F> = Vec::new();
-            let mut i = 0;
-            while i < table_len {
-                ret.push(s[i]);
-                i += 1;
-            }
-            ret
-        };
-        let h2 = {
-            let mut ret: Vec<F> = Vec::new();
-            let mut i = table_len-1;
-            while i < table_len*2-1 {
-                ret.push(s[i]);
-                i += 1;
-            }
-            ret
-        };
+        assert_eq!(s.len(), order*2-1);
+        let h1 = s[..order].to_vec();
+        let h2 = s[order-1..].to_vec();
         let t_poly = UnivariatePolynomial::lagrange(table.clone());
-        witness.push(last); // pad witness to length order
-        // todo: clone it before push
-        let f_poly = UnivariatePolynomial::lagrange(witness.clone());
-        let s_poly = UnivariatePolynomial::lagrange(s.clone());
+        let mut witness_clone = witness.clone();
+        witness_clone.push(last); // pad to length order for polynomial
+        let f_poly = UnivariatePolynomial::lagrange(witness_clone);
         let h1_poly = UnivariatePolynomial::lagrange(h1);
         let h2_poly = UnivariatePolynomial::lagrange(h2);
-        // let f_comm = Pcs::commit(&pp.pcs, &f_poly);
-        // let h1_comm = Pcs::commit(&pp.pcs, &h1_poly);
-        // let h2_comm = Pcs::commit(&pp.pcs, &h2_poly);
-        let f_comm = Pcs::commit_and_write(&pp.pcs, &f_poly, transcript);
-        let h1_comm = Pcs::commit_and_write(&pp.pcs, &h1_poly, transcript);
-        let h2_comm = Pcs::commit_and_write(&pp.pcs, &h2_poly, transcript);
+        // write f_comm, h1_comm, h2_comm
+        Pcs::commit_and_write(&pp.pcs, &f_poly, transcript).unwrap();
+        Pcs::commit_and_write(&pp.pcs, &h1_poly, transcript).unwrap();
+        Pcs::commit_and_write(&pp.pcs, &h2_poly, transcript).unwrap();
+
+        // round 2
         let mut challenges: Vec<F> = Vec::with_capacity(2);
         challenges.extend(transcript.squeeze_challenges(2));
         let beta = &challenges[0];
         let gamma = &challenges[1];
         let z_poly = compute_inner_polynomial(beta, gamma, &witness, &table, &s);
-        let z_comm = Pcs::commit_and_write(&pp.pcs, &z_poly, transcript);
+        // write z_comm
+        Pcs::commit_and_write(&pp.pcs, &z_poly, transcript).unwrap();
+
+        // round 3
         let delta = &transcript.squeeze_challenge();
         let q_poly = compute_quotient_polynomial(
-            beta,
-            gamma,
-            delta,
-            &t_poly,
-            &f_poly,
-            &s_poly,
-            &h1_poly,
-            &h2_poly,
-            &z_poly,
+            beta, gamma, delta, &t_poly, &f_poly, &h1_poly, &h2_poly, &z_poly,
         );
+        // write q_comm
+        Pcs::commit_and_write(&pp.pcs, &q_poly, transcript).unwrap();
+
+        // round 4
+        let zeta = transcript.squeeze_challenge();
+        let f_eval = f_poly.evaluate(&zeta);
+        let h1_eval = h1_poly.evaluate(&zeta);
+        let h2_eval = h2_poly.evaluate(&zeta);
+        let z_eval = z_poly.evaluate(&zeta);
+        let q_eval = q_poly.evaluate(&zeta);
+        transcript.write_field_elements(vec![
+            &f_eval, &h1_eval, &h2_eval, &z_eval, &q_eval
+        ]).unwrap();
+        let g_zeta = pp.g * zeta;
+        let h1_g_eval = h1_poly.evaluate(&g_zeta);
+        let h2_g_eval = h2_poly.evaluate(&g_zeta);
+        let z_g_eval = z_poly.evaluate(&g_zeta);
+        transcript.write_field_elements(vec![
+            &h1_g_eval, &h2_g_eval, &z_g_eval
+        ]).unwrap();
+
+        // round 5
+        let eps = &transcript.squeeze_challenge();
+        let agg_witness_comm = {
+            let agg_poly = aggregate_poly(eps, vec![
+                &f_poly, &h1_poly, &h2_poly, &z_poly, &q_poly
+            ]);
+            let agg_eval = aggregate_field(eps, vec![
+                &f_eval, &h1_eval, &h2_eval, &z_eval, &q_eval
+            ]);
+            let numer = agg_poly + -agg_eval;
+            let denom = UnivariatePolynomial::monomial(vec![-zeta, F::ONE]);
+            let agg_witness = numer.div(&denom);
+            Pcs::commit_and_write(&pp.pcs, &agg_witness, transcript).unwrap();
+        };
+        let agg_g_witness_comm = {
+            let agg_poly = aggregate_poly(eps, vec![
+                &h1_poly, &h2_poly, &z_poly
+            ]);
+            let agg_eval = aggregate_field(eps, vec![
+                &h1_g_eval, &h2_g_eval, &z_g_eval
+            ]);
+            let numer = agg_poly + -agg_eval;
+            let denom = UnivariatePolynomial::monomial(vec![-g_zeta, F::ONE]);
+            let agg_witness = numer.div(&denom);
+            Pcs::commit_and_write(&pp.pcs, &agg_witness, transcript).unwrap();
+        };
         Ok(())
+        // (*transcript.into_proof()).to_vec()
     }
 }
 
