@@ -1,12 +1,8 @@
 use crate::{
     backend::plookup::{PlookupProverParam, PlookupVerifierParam, PlookupInfo},
     pcs::PolynomialCommitmentScheme,
-    poly::Polynomial,
-    util::{
-        arithmetic::PrimeField,
-        test::std_rng,
-    },
-    poly::univariate::{UnivariateBasis, UnivariatePolynomial},
+    util::arithmetic::PrimeField,
+    poly::univariate::UnivariatePolynomial,
     Error,
 };
 
@@ -20,33 +16,8 @@ pub(super) fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F, Polyn
     ),
     Error> {
     let order = 1 << info.k;
-    // let mut rng = std_rng();
-    let (pcs_pp, pcs_vp) = Pcs::trim(param, order, 1)?;
-    
-    let g = {
-        let mut u = F::ROOT_OF_UNITY;
-        let mut i = info.k;
-        let s = F::S;
-        assert!(i <= s);
-        while i < s {
-            u = u.square();
-            i += 1;
-        }
-        u
-    };
-    let roots = { // [g, g^2, ..., 1]
-        let mut ret: Vec<F> = Vec::with_capacity(order);
-        let mut i = 1;
-        let mut now = g;
-        while i < order {
-            ret.push(now);
-            now = now*g;
-            i += 1;
-        }
-        assert_eq!(now, F::ONE);
-        ret.push(now);
-        ret
-    };
+    let (pcs_pp, pcs_vp) = Pcs::trim(param, order*4, 1)?;
+    let g = get_root_of_power_of_2_order(info.k)?;
     let pp: PlookupProverParam<F, Pcs> = PlookupProverParam {
         pcs: pcs_pp,
         g: g,
@@ -58,30 +29,46 @@ pub(super) fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F, Polyn
     Ok((pp, vp))
 }
 
+/// get root of order 2^n of a primefield.
+/// require that the order of the primefield is a multiplicative of 2^n
+pub(super) fn get_root_of_power_of_2_order<F: PrimeField>(n: u32) -> Result<F, Error> {
+    let s = F::S;
+    if n > s {
+        return Err(Error::InvalidPcsParam("invalid order".to_string()))
+    }
+    let mut u = F::ROOT_OF_UNITY;
+    let mut i = n;
+    while i < s {
+        u = u.square();
+        i += 1;
+    }
+    Ok(u)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        backend::plookup::{preprocessor::preprocess, PlookupVerifierParam},
-        pcs::PolynomialCommitmentScheme,
-        util::{
-            arithmetic::PrimeField,
-            test::std_rng,
+        backend::plookup::{preprocessor::preprocess, PlookupInfo},
+        halo2_curves::bn256::{Bn256, Fr},
+        pcs::{
+            PolynomialCommitmentScheme,
+            univariate::UnivariateKzg,
         },
+        util::test::std_rng,
     };
-    use crate::pcs::univariate::UnivariateKzg;
-    use halo2_curves::{bn256::{Bn256, Fr}}; // Use Fr for the field type
 
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
     fn test_preprocess() {
         let mut rng = std_rng();
-        let k = 10;
+        let k = 2;
         let n = 1 << k;
+        let table = vec![Fr::one(), Fr::from(2), Fr::from(3), Fr::from(4)];
+        assert_eq!(n, table.len());
+        let lookup = vec![Fr::one(), Fr::one(), Fr::from(2)];
         let param = Pcs::setup(n, 1, &mut rng).unwrap();
-        // let group = Fr::ZETA;
-        // let (pp, vp) = preprocess::<Fr, Pcs>(&param, n).unwrap(); // Explicitly specify Fr for F
-
-        assert!(true);
+        let info = PlookupInfo{k, table, lookup};
+        let (_pp, _vp) = preprocess::<Fr, Pcs>(&param, &info).unwrap();
     }
 }
