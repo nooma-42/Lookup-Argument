@@ -34,23 +34,36 @@ mod tests {
     use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
     use std::cmp::max;
+    use std::time::Instant;
     #[test]
     fn test_cq() {
-        let lookup = vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(3)];
-        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+        let mut table = vec![];
+        for k in 1..=2_usize.pow(6) {
+            table.push(Fr::from(k as u64));
+        }
+        // let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
+        let lookup = vec![Fr::from(4), Fr::from(3), Fr::from(5), Fr::from(2)];
     
         let m = lookup.len();
         let t = table.len();
         let poly_size = max(t, m).next_power_of_two() * 2;
 
         // 1. setup
+        let start = Instant::now();
         let (param, pp, vp, q_t_comm_poly_coeffs) = preprocess(t, m, &table).unwrap();
         assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
+        let duration1 = start.elapsed();
+        // timings.push(format!("k={k}, setup and preprocess time: {}ms",duration1.as_millis()));
+        println!("\n ------------Setup and preprocess: {}ms----------- \n",duration1.as_millis());
 
         // 2. generate proof
+        let start = Instant::now();
         let prover = Prover::new(&table, &param, &pp);
         let proof = prover.prove(&lookup, &q_t_comm_poly_coeffs);
         println!("proof: {:?}", proof);
+        let duration2 = start.elapsed();
+        // timings.push(format!("k={k}, setup and preprocess time: {}ms",duration1.as_millis()));
+        println!("\n ------------prove: {}ms----------- \n",duration2.as_millis());
 
 
         let scalar_0 = Fr::from(0 as u64);
@@ -77,6 +90,7 @@ mod tests {
         let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
 
         // 3.2 verifier to verify
+        let start = Instant::now();
         let verifier = Verifier::new(&vp);
         verifier.verify(
             &proof,
@@ -86,6 +100,8 @@ mod tests {
             m,
             t
         );
+        let duration3 = start.elapsed();
+        println!("\n ------------verify: {}ms----------- \n",duration3.as_millis());
 
         println!("Finished to verify: cq");
     }

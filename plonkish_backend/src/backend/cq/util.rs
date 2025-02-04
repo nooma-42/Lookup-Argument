@@ -1,5 +1,6 @@
 use halo2_curves::bn256::{Fr, G1Affine, Fq};
 use crate::util::arithmetic::{Field, root_of_unity};
+use std::time::Instant;
 
 type Scalar = Fr;
 
@@ -26,7 +27,10 @@ fn fft_general(values: &mut Vec<Scalar>, inv: bool) -> Vec<Scalar> {
         let R = _fft(&vals.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(),  &roots_of_unity.iter().step_by(2).cloned().collect::<Vec<_>>());
         let mut o = vec![Fr::from(0); vals.len()];
         for (i, (x, y)) in L.iter().zip(R.iter()).enumerate() {
+            let start = Instant::now();
+            let duration = start.elapsed();
             let y_times_root = *y * roots_of_unity[i];
+            // println!("\n ------------y_times_root: {}ms----------- \n",duration.as_millis());
             o[i] = *x + y_times_root;
             o[i + L.len()] = *x - y_times_root;
         }
@@ -108,12 +112,20 @@ pub fn ec_ifft(values: &mut Vec<G1Affine>) -> Vec<G1Affine> {
 mod tests {
     use super::*;
     use crate::backend::cq::preprocessor::preprocess;
+    use std::time::Instant;
 
     #[test]
     fn test_fft() {
-        let mut values = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+        let mut values = vec![];
+        for k in 1..=2_usize.pow(6) {
+            values.push(Fr::from(k as u64));
+        }
+        // let mut values = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+        let start = Instant::now();
         let mut orig_fft = fft(&mut values);
-        println!("FFT result: {:?}", orig_fft);
+        let duration = start.elapsed();
+        println!("\n ------------fft: {}ms----------- \n",duration.as_millis());
+        // println!("FFT result: {:?}", orig_fft);
 
         let orig_from_ifft = ifft(&mut orig_fft);
         println!("IFFT result: {:?}", orig_from_ifft);

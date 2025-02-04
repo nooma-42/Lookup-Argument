@@ -1,12 +1,15 @@
+use halo2_proofs::poly::kzg::msm::DualMSM;
 use rand::rngs::OsRng;
 use std::{cmp::max, iter};
 use crate::{
     pcs::PolynomialCommitmentScheme,
     Error,
-    backend::cq::util::{ec_fft, ec_ifft, fft, ifft}
+    backend::cq::util::{ec_fft, ec_ifft, fft, ifft, log_2},
+    util::arithmetic::{Field, root_of_unity}
 };
 use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2, Fq};
 use crate::pcs::univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam};
+use std::time::Instant;
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
@@ -20,20 +23,32 @@ pub fn preprocess(
         UnivariateKzgParam<Bn256>,
         UnivariateKzgProverParam<Bn256>,
         UnivariateKzgVerifierParam<Bn256>,
-        Vec<G1Affine>, 
+        Vec<G1>, 
     ), 
     Error>
 {
     let mut rng = OsRng;
     let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
+
+    // let start = Instant::now();
     let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();
+    // let duration1 = start.elapsed();
+    // println!("\n ------------Setup: {}ms----------- \n",duration1.as_millis());
+
+
     let (pp, vp) = Pcs::trim(&param, poly_size, 1).unwrap();
     let mut powers_of_x = pp.monomial_g1()[..t].to_vec();
+
+    // let start = Instant::now();
     let q_t_comm_poly_coeffs = precompute_with_fk(table, &mut powers_of_x);
+    // let duration2 = start.elapsed();
+    // println!("\n ------------precompute_with_fk: {}ms----------- \n",duration2.as_millis());
+
     Ok((param, pp, vp, q_t_comm_poly_coeffs))
 }
 
-fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1Affine> {
+fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1> {
+    let start = Instant::now();
     println!("\n ***************** Start fk() ****************");
     assert_eq!(coeffs.len(), powers_of_x.len(), "length should be equal");
     let n = coeffs.len();
@@ -70,36 +85,74 @@ fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1Affine> {
     // F: DFT matrix, F_inv: inverse DFT matrix
     // We want to get Q_T_comm_poly_coeffs = C * x = F_inv * diag(F * first_col) * F * x
     // 1. right hand side: F * x
+
+    // let start1 = Instant::now();
     let rhs = ec_fft(&mut inv_powers_of_x);
+    // let duration1 = start1.elapsed();
+    // println!("\n ------------ec_fft: {}ms----------- \n",duration1.as_millis());
 
     // 2. middle hand side: F * first_col
+    // let start2 = Instant::now();
     let mhs = fft(&mut first_col);
+    // let duration2 = start2.elapsed();
+    // println!("\n ------------fft: {}ms----------- \n",duration2.as_millis());
 
     // middle * right (element wise) to get diagonal: diag(F * first_col) * F * x
     let m_r_hs: Vec<G1Affine> = rhs.iter().zip(mhs.iter()).map(|(&r, &m)|(r * m).into()).collect();
 
     // 3. ifft
+    // let start3 = Instant::now();
     let result = ec_ifft(&mut m_r_hs.clone());
+    // let duration3 = start3.elapsed();
+    // println!("\n ------------ec_ifft: {}ms----------- \n",duration3.as_millis());
 
     // 4. return first n values
-    let q_comm_poly_coeffs = result[..n].to_vec();
+    let mut q_comm_poly_coeffs = result[..n].to_vec();
     println!("\n ***************** End fk() ****************");
-    q_comm_poly_coeffs
+
+    // let duration = start.elapsed();
+    // println!("\n ------------fk function: {}ms----------- \n",duration.as_millis());
+
+    // let start4 = Instant::now();
+    let t = coeffs.len();
+    let log_values: usize = log_2(coeffs.len());
+    let root_of_unity = root_of_unity::<Fr>(log_values);
+    let roots = (0..coeffs.len()).map(|i| root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
+    // let duration4 = start4.elapsed();
+    // println!("\n ------------root_of_unity: {}ms----------- \n",duration4.as_millis());
+    
+    let k_t_commit = ec_fft(&mut q_comm_poly_coeffs);
+    
+    let mut q_t_comm = vec![G1 {x: Fq::zero(), y: Fq::zero(), z: Fq::zero()}; t];
+    // let start5 = Instant::now();
+    for i in 0.. t {
+        let scale = roots[i] * (Scalar::from(t as u64).invert().unwrap());
+        q_t_comm[i] = k_t_commit[i] * scale;
+    }
+    // let duration5 = start5.elapsed();
+    // println!("\n ------------k_t_commit: {}ms----------- \n",duration5.as_millis());
+    
+    q_t_comm
 }
 
 pub fn precompute_with_fk(
     table: &Vec<Fr>,
     powers_of_x: &mut Vec<G1Affine>,
-) -> Vec<G1Affine> {
+) -> Vec<G1> {
     // Convert table values to Scalars
     let t_values: Vec<Scalar> = table.iter().map(|&val| Scalar::from(val)).collect();
     
     // Compute t_poly_coeffs using inverse FFT
     let mut t_poly_coeffs = t_values.clone();
+    // let start = Instant::now();
     t_poly_coeffs = ifft(&mut t_poly_coeffs);
+    // let duration = start.elapsed();
+    // println!("\n ------------ifft: {}ms----------- \n",duration.as_millis());
 
     // Compute h values with fk
+    
     fk(&mut t_poly_coeffs, powers_of_x)
+
 }
 
 #[cfg(test)]

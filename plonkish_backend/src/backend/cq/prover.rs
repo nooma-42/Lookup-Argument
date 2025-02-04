@@ -1,5 +1,5 @@
 use std::{collections::HashMap, collections::hash_map::Entry};
-use halo2_curves::bn256::{Bn256, Fr, G1Affine, Fq};
+use halo2_curves::bn256::{Bn256, Fr, G1Affine, Fq, G1};
 use crate::{
     poly::univariate::UnivariatePolynomial,
     backend::cq::util::log_2,
@@ -12,6 +12,7 @@ use crate::{
         transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptWrite},
     }
 };
+use std::time::Instant;
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
@@ -36,7 +37,7 @@ impl Prover<'_> {
     pub fn prove(
         &self,
         lookup: &Vec<Fr>,
-        q_t_comm_poly_coeffs: &Vec<G1Affine>,
+        q_t_comm: &Vec<G1>,
     ) -> Vec<u8>
     {
         let table = self.table.clone();
@@ -72,8 +73,8 @@ impl Prover<'_> {
         let m_values: Vec<Fr> = table.iter()
             .map(|&val| *duplicates.get(&val).unwrap_or(&Fr::from(0)))
             .collect();
-
         // println!("m_values: {:?}", m_values);
+        
         // m(X)
         let m_poly = UnivariatePolynomial::lagrange(m_values.clone()).ifft();
         // println!("m_poly: {:?}", m_poly);
@@ -103,7 +104,9 @@ impl Prover<'_> {
             // sanity check
             assert_eq!(a_i * (&beta + *t_i), m_values[i], "A: not equal");
         }
-    
+        
+        // println!("a_values: {:?}", a_values);
+
         // println!("A_values: {:?}", a_values);
 
         // 1.b. compute A(X) from A_i values
@@ -151,33 +154,23 @@ impl Prover<'_> {
         // let q_a_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_a_poly, &mut transcript).unwrap();
         // println!("q_a_comm_1: {:?}", q_a_comm_1.clone().to_affine());
 
+        
         // ===============Method 2====================
         // Here we use method 2: commit Q_A(X) with FK
         // implement FK algorithm to compute q_a_comm_1
-        let log_a_values = log_2(a_values.len());
-        let a_value_root_of_unity = root_of_unity::<Fr>(log_a_values);
-        let roots = (0..a_values.len()).map(|i| a_value_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
 
-        let group1_zero = G1Affine { x: Fq::zero(), y: Fq::zero()};
-
-        let mut q_a_comm_1_fk = group1_zero;
+        let mut q_a_comm_1_fk = G1Affine { x: Fq::zero(), y: Fq::zero()};;
         for (i, &a_val) in a_values.iter().enumerate() {
-            let mut k_t_comm = group1_zero;
-            let mut root = Scalar::one();
-            for j in 0..(t as usize) {
-                let q_t_coeff = q_t_comm_poly_coeffs[j];
-                k_t_comm = (k_t_comm + q_t_coeff * root).into();
-                root *= roots[i];
+            if a_val == scalar_0 {
+                continue;
             }
-            let scale = roots[i] * (Scalar::from(t as u64).invert().unwrap());
-            // Compute Quotient polynomial commitment of T(X)
-            let q_t_comm = k_t_comm * scale;
-            let a_times_q_t_comm = q_t_comm * a_val;
+
+            let a_times_q_t_comm = q_t_comm[i] * a_val;
             q_a_comm_1_fk = (q_a_comm_1_fk + a_times_q_t_comm).into();
         }
-        // println!("Commitment of Q_A(X) with FK: {:?} \n", q_a_comm_1_fk);
+        
         transcript.write_commitment(&q_a_comm_1_fk);
-    
+
 
         // 3. commit B_0(X): Step 5-7 in the paper
         // 3.a. compute B_i values
