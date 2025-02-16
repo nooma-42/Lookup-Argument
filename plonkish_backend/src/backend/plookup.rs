@@ -39,8 +39,10 @@ where
     F: PrimeField,
     Pcs: PolynomialCommitmentScheme<F>,
 {
-    pub(crate) pcs: Pcs::ProverParam,
-    pub(crate) g: F,
+    pcs: Pcs::ProverParam,
+    g: F,
+    table: Vec<F>,
+    lookup: Vec<F>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,8 +51,9 @@ where
     F: PrimeField,
     Pcs: PolynomialCommitmentScheme<F>,
 {
-    pub(crate) pcs: Pcs::VerifierParam,
-    pub(crate) g: F,
+    pcs: Pcs::VerifierParam,
+    g: F,
+    table: Vec<F>,
 }
 
 #[derive(Clone, Debug)]
@@ -85,7 +88,7 @@ where
         info: &PlookupInfo<F>,
         transcript: &mut (impl TranscriptWrite<Pcs::CommitmentChunk, F> + InMemoryTranscript),
     ) -> Result<(), Error> {
-        prove(pp, info, transcript)
+        prove(pp, transcript)
     }
 }
 

@@ -14,19 +14,15 @@ pub(super) fn prove<
     Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>
 >(
     pp: PlookupProverParam<F, Pcs>,
-    info: &PlookupInfo<F>,
     transcript: &mut impl TranscriptWrite<Pcs::CommitmentChunk, F>,
 ) -> Result<(), Error> {
-    let order = 1 << info.k;
+    let order = pp.table.len();
     // TODO: add another entry to Error for lookup itself?
-    if info.table.len() != order {
-        return Err(Error::InvalidPcsParam(String::from("unmatched table length and order")))
-    }
-    if info.lookup.len() >= order {
+    if pp.lookup.len() >= order {
         return Err(Error::InvalidPcsParam(String::from("lookup length too long")))
     }
-    let t = info.table.clone();
-    let mut f = info.lookup.clone();
+    let t = pp.table.clone();
+    let mut f = pp.lookup.clone();
 
     // round 1
     // pad f to length order-1
@@ -373,6 +369,6 @@ mod tests {
         let info = PlookupInfo{k, table, lookup};
         let (pp, _) = preprocess::<Fr, Pcs>(&param, &info).unwrap();
         let mut transcript = Keccak256Transcript::new(());
-        prove::<Fr,Pcs>(pp, &info, &mut transcript).unwrap()
+        prove::<Fr,Pcs>(pp, &mut transcript).unwrap()
     }
 }
