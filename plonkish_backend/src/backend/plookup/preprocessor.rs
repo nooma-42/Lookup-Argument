@@ -21,10 +21,13 @@ pub(super) fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F, Polyn
     let pp: PlookupProverParam<F, Pcs> = PlookupProverParam {
         pcs: pcs_pp,
         g: g,
+        table: info.table.clone(),
+        lookup: info.lookup.clone(),
     };
     let vp: PlookupVerifierParam<F, Pcs> = PlookupVerifierParam {
         pcs: pcs_vp,
         g: g,
+        table: info.table.clone(),
     };
     Ok((pp, vp))
 }
