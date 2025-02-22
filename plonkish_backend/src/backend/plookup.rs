@@ -1,33 +1,18 @@
-use halo2_proofs::transcript;
-use rand::{rngs::OsRng, RngCore};
-use std::{fmt::Debug, hash::Hash, marker::PhantomData, ops::Div};
+use std::{fmt::Debug, hash::Hash, marker::PhantomData};
 
-use halo2_curves::{bn256::Bn256, ff::WithSmallOrderMulGroup};
+use halo2_curves::ff::WithSmallOrderMulGroup;
 
 use crate::{
-    backend::{
-        plookup::{
-            preprocessor::preprocess,
-            prover::prove,
-        },
-        PlonkishBackend, PlonkishCircuit, PlonkishCircuitInfo,
-    },
-    poly::Polynomial,
+    backend::{PlonkishBackend, PlonkishCircuit, PlonkishCircuitInfo},
     poly::univariate::UnivariatePolynomial,
-    pcs::{
-        PolynomialCommitmentScheme,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam},
-    },
+    pcs::PolynomialCommitmentScheme,
     util::{
-        arithmetic::{Field, PrimeField, MultiMillerLoop, root_of_unity},
-        expression::Expression,
-        test::std_rng,
-        Deserialize, DeserializeOwned, Itertools, Serialize,
-        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
+        arithmetic::PrimeField,
+        Deserialize, DeserializeOwned, Serialize,
+        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite},
     },
     Error,
 };
-
 
 pub mod preprocessor;
 pub mod prover;
@@ -81,25 +66,35 @@ where
             PlookupVerifierParam<F, Pcs>,
         ), 
         Error> {
-        preprocess(param, info)
+        preprocessor::preprocess(param, info)
     }
 
     fn prove(
         pp: PlookupProverParam<F, Pcs>,
-        info: &PlookupInfo<F>,
         transcript: &mut (impl TranscriptWrite<Pcs::CommitmentChunk, F> + InMemoryTranscript),
     ) -> Result<(), Error> {
-        prove(pp, transcript)
+        prover::prove(pp, transcript)
+    }
+
+    fn verify(
+        vp: PlookupVerifierParam<F, Pcs>,
+        transcript: &mut (impl TranscriptRead<Pcs::CommitmentChunk, F> + InMemoryTranscript),
+    ) -> Result<(), Error> {
+        verifier::verify(vp, transcript)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::collections::HashSet;
-    use halo2_curves::bn256::Fr;
-    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite};
-    use num_bigint::BigUint;
+    use halo2_curves::bn256::{Bn256, Fr};
+    use crate::{
+        pcs::univariate::UnivariateKzg,
+        util::{
+            test::std_rng,
+            transcript::Keccak256Transcript,
+        },
+    };
 
     type Pcs = UnivariateKzg<Bn256>;
     type Pb = Plookup<Fr, Pcs>;
@@ -121,6 +116,8 @@ mod test {
 
         let mut transcript = Keccak256Transcript::new(());
         // Prove
-        Pb::prove(pp, &info, &mut transcript).unwrap();
+        Pb::prove(pp, &mut transcript).unwrap();
+        // Verify
+        Pb::verify(vp, &mut transcript).unwrap();
     }
 }

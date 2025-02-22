@@ -1,10 +1,11 @@
 use std::ops::Div;
 
+use halo2_curves::ff::WithSmallOrderMulGroup;
+
 use crate::{
     pcs::PolynomialCommitmentScheme,
     poly::univariate::UnivariatePolynomial,
     util::{arithmetic::PrimeField, transcript::TranscriptWrite},
-    halo2_curves::ff::WithSmallOrderMulGroup,
     Error,
 };
 
