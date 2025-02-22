@@ -32,6 +32,7 @@ use crate::{
 pub mod preprocessor;
 pub mod prover;
 pub mod verifier;
+pub mod util;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlookupProverParam <F, Pcs>

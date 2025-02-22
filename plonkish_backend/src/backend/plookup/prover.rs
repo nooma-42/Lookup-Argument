@@ -1,12 +1,16 @@
 use std::ops::Div;
 
 use crate::{
-    backend::plookup::{PlookupInfo, PlookupProverParam},
     pcs::PolynomialCommitmentScheme,
     poly::univariate::UnivariatePolynomial,
     util::{arithmetic::PrimeField, transcript::TranscriptWrite},
     halo2_curves::ff::WithSmallOrderMulGroup,
     Error,
+};
+
+use super::{
+    PlookupProverParam,
+    util::{aggregate_field, aggregate_poly},
 };
 
 pub(super) fn prove<
@@ -17,8 +21,8 @@ pub(super) fn prove<
     transcript: &mut impl TranscriptWrite<Pcs::CommitmentChunk, F>,
 ) -> Result<(), Error> {
     let order = pp.table.len();
-    // TODO: add another entry to Error for lookup itself?
     if pp.lookup.len() >= order {
+        // TODO: add another entry to Error for lookup itself?
         return Err(Error::InvalidPcsParam(String::from("lookup length too long")))
     }
     let t = pp.table.clone();
@@ -49,10 +53,9 @@ pub(super) fn prove<
     challenges.extend(transcript.squeeze_challenges(2));
     let beta = &challenges[0];
     let gamma = &challenges[1];
-    // TODO: return a vector
     let z = compute_inner_table(beta, gamma, &f, &t, &s);
-    // write z_comm
     let z_poly = UnivariatePolynomial::lagrange(z.clone()).ifft();
+    // write z_comm
     Pcs::commit_and_write(&pp.pcs, &z_poly, transcript)?;
 
     // round 3
@@ -72,7 +75,7 @@ pub(super) fn prove<
     let z_eval = z_poly.evaluate(&zeta);
     let q_eval = q_poly.evaluate(&zeta);
     transcript.write_field_elements(
-        vec![&f_eval, &h1_eval, &h2_eval, &z_eval, &q_eval])?;
+        vec![&f_eval, &h1_eval, &h2_eval, &z_eval])?;
     let g_zeta = pp.g * zeta;
     let h1_g_eval = h1_poly.evaluate(&g_zeta);
     let h2_g_eval = h2_poly.evaluate(&g_zeta);
@@ -234,36 +237,6 @@ fn to_shifted_poly<F: PrimeField+WithSmallOrderMulGroup<3>>(table: &Vec<F>) -> U
         .cloned()
         .collect();
     UnivariatePolynomial::lagrange(coeffs).ifft()
-}
-
-pub(super) fn aggregate_poly<F: PrimeField>(
-    scalar: &F,
-    polys: Vec<&UnivariatePolynomial<F>>,
-) -> UnivariatePolynomial<F> {
-    assert!(polys.len()>0);
-
-    let mut result = polys[0].clone();
-    let mut power = scalar.clone();
-    for poly in polys[1..].iter() {
-        result += *poly * power;
-        power *= scalar;
-    }
-    result
-}
-
-pub(super) fn aggregate_field<F: PrimeField>(
-    scalar: &F,
-    nums: Vec<&F>,
-) -> F {
-    assert!(nums.len()>0);
-
-    let mut result = nums[0].clone();
-    let mut power = scalar.clone();
-    for num in nums[1..].iter() {
-        result += **num * power;
-        power *= scalar;
-    }
-    result
 }
 
 #[cfg(test)]
