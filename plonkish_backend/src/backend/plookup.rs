@@ -1,9 +1,6 @@
 use std::{fmt::Debug, hash::Hash, marker::PhantomData};
-
 use halo2_curves::ff::WithSmallOrderMulGroup;
-
 use crate::{
-    backend::{PlonkishBackend, PlonkishCircuit, PlonkishCircuitInfo},
     poly::univariate::UnivariatePolynomial,
     pcs::PolynomialCommitmentScheme,
     util::{
@@ -110,13 +107,15 @@ mod test {
 
         // Setup
         let (pp, vp) = {
-            let param = Pcs::setup(n, 1, &mut rng).unwrap();
+            let param = Pcs::setup(n*4, 1, &mut rng).unwrap();
             Pb::preprocess(&param, &info).unwrap()
         };
 
         let mut transcript = Keccak256Transcript::new(());
         // Prove
         Pb::prove(pp, &mut transcript).unwrap();
+        let proof = transcript.into_proof();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
         // Verify
         Pb::verify(vp, &mut transcript).unwrap();
     }

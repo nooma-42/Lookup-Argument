@@ -1,17 +1,17 @@
 use std::ops::Div;
-
 use halo2_curves::ff::WithSmallOrderMulGroup;
-
 use crate::{
-    pcs::PolynomialCommitmentScheme,
+    pcs::{PolynomialCommitmentScheme, Evaluation},
     poly::univariate::UnivariatePolynomial,
-    util::{arithmetic::PrimeField, transcript::TranscriptWrite},
+    util::{
+        arithmetic::PrimeField,
+        transcript::{TranscriptWrite, InMemoryTranscript},
+    },
     Error,
 };
-
 use super::{
     PlookupProverParam,
-    util::{aggregate_field, aggregate_poly},
+    util::aggregate_poly,
 };
 
 pub(super) fn prove<
@@ -19,7 +19,7 @@ pub(super) fn prove<
     Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>
 >(
     pp: PlookupProverParam<F, Pcs>,
-    transcript: &mut impl TranscriptWrite<Pcs::CommitmentChunk, F>,
+    transcript: &mut (impl TranscriptWrite<Pcs::CommitmentChunk, F> + InMemoryTranscript),
 ) -> Result<(), Error> {
     let order = pp.table.len();
     if pp.lookup.len() >= order {
@@ -44,10 +44,9 @@ pub(super) fn prove<
     let f_poly = UnivariatePolynomial::lagrange(f_clone).ifft();
     let h1_poly = UnivariatePolynomial::lagrange(h1.clone()).ifft();
     let h2_poly = UnivariatePolynomial::lagrange(h2.clone()).ifft();
-    // write f_comm, h1_comm, h2_comm
-    Pcs::commit_and_write(&pp.pcs, &f_poly, transcript)?;
-    Pcs::commit_and_write(&pp.pcs, &h1_poly, transcript)?;
-    Pcs::commit_and_write(&pp.pcs, &h2_poly, transcript)?;
+    let f_comm = Pcs::commit_and_write(&pp.pcs, &f_poly, transcript)?;
+    let h1_comm = Pcs::commit_and_write(&pp.pcs, &h1_poly, transcript)?;
+    let h2_comm = Pcs::commit_and_write(&pp.pcs, &h2_poly, transcript)?;
 
     // round 2
     let mut challenges: Vec<F> = Vec::with_capacity(2);
@@ -56,8 +55,7 @@ pub(super) fn prove<
     let gamma = &challenges[1];
     let z = compute_inner_table(beta, gamma, &f, &t, &s);
     let z_poly = UnivariatePolynomial::lagrange(z.clone()).ifft();
-    // write z_comm
-    Pcs::commit_and_write(&pp.pcs, &z_poly, transcript)?;
+    let z_comm = Pcs::commit_and_write(&pp.pcs, &z_poly, transcript)?;
 
     // round 3
     let delta = &transcript.squeeze_challenge();
@@ -65,8 +63,7 @@ pub(super) fn prove<
         &pp.g, beta, gamma, delta, &t, &h1, &h2, &z,
         t_poly.clone(), f_poly.clone(), h1_poly.clone(), h2_poly.clone(), z_poly.clone(),
     );
-    // write q_comm
-    Pcs::commit_and_write(&pp.pcs, &q_poly, transcript).unwrap();
+    let q_comm = Pcs::commit_and_write(&pp.pcs, &q_poly, transcript).unwrap();
 
     // round 4
     let zeta = transcript.squeeze_challenge();
@@ -85,31 +82,20 @@ pub(super) fn prove<
         vec![&h1_g_eval, &h2_g_eval, &z_g_eval])?;
 
     // round 5
-    let eps = &transcript.squeeze_challenge();
-    let _agg_witness_comm = {
-        let agg_poly = aggregate_poly(eps, vec![
-            &f_poly, &h1_poly, &h2_poly, &z_poly, &q_poly
-        ]);
-        let agg_eval = aggregate_field(eps, vec![
-            &f_eval, &h1_eval, &h2_eval, &z_eval, &q_eval
-        ]);
-        let numer = agg_poly + -agg_eval;
-        let denom = UnivariatePolynomial::monomial(vec![-zeta, F::ONE]);
-        let agg_witness = numer.div(&denom);
-        Pcs::commit_and_write(&pp.pcs, &agg_witness, transcript).unwrap();
-    };
-    let _agg_g_witness_comm = {
-        let agg_poly = aggregate_poly(eps, vec![
-            &h1_poly, &h2_poly, &z_poly
-        ]);
-        let agg_eval = aggregate_field(eps, vec![
-            &h1_g_eval, &h2_g_eval, &z_g_eval
-        ]);
-        let numer = agg_poly + -agg_eval;
-        let denom = UnivariatePolynomial::monomial(vec![-g_zeta, F::ONE]);
-        let agg_witness = numer.div(&denom);
-        Pcs::commit_and_write(&pp.pcs, &agg_witness, transcript)?;
-    };
+    let batch_polys = [&f_poly, &h1_poly, &h2_poly, &z_poly, &q_poly];
+    let batch_comms = [&f_comm, &h1_comm, &h2_comm, &z_comm, &q_comm];
+    let batch_points = [zeta, g_zeta];
+    let batch_evals = [
+        Evaluation::new(0, 0, f_eval),
+        Evaluation::new(1, 0, h1_eval),
+        Evaluation::new(2, 0, h2_eval),
+        Evaluation::new(3, 0, z_eval),
+        Evaluation::new(4, 0, q_eval),
+        Evaluation::new(1, 1, h1_g_eval),
+        Evaluation::new(2, 1, h2_g_eval),
+        Evaluation::new(3, 1, z_g_eval),
+    ];
+    Pcs::batch_open(&pp.pcs, batch_polys, batch_comms, &batch_points, &batch_evals, transcript)?;
     Ok(())
 }
 
@@ -242,20 +228,16 @@ fn to_shifted_poly<F: PrimeField+WithSmallOrderMulGroup<3>>(table: &Vec<F>) -> U
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use halo2_curves::{bn256::{Bn256, Fr}, ff::Field};
     use crate::{
-        backend::plookup::{
-            preprocessor::{get_root_of_power_of_2_order, preprocess},
-            prover::{
-                prove,
-                compute_inner_table,
-                compute_quotient_polynomial,
-                sorted_by_table,
-            }, PlookupInfo
-        },
-        halo2_curves::{bn256::{Bn256, Fr}, ff::Field},
-        pcs::{univariate::UnivariateKzg, PolynomialCommitmentScheme},
+        pcs::univariate::UnivariateKzg,
         poly::univariate::UnivariatePolynomial,
-        util::{test::std_rng, transcript::{Keccak256Transcript,InMemoryTranscript}}
+        util::{test::std_rng, transcript::Keccak256Transcript},
+    };
+    use super::super::{
+        PlookupInfo,
+        preprocessor::{get_root_of_power_of_2_order, preprocess},
     };
 
     type Poly = UnivariatePolynomial<Fr>;
@@ -339,10 +321,12 @@ mod tests {
         let n = 1 << k;
         let table = vec![Fr::one(), Fr::from(2), Fr::from(3), Fr::from(4)];
         let lookup = vec![Fr::one(), Fr::one(), Fr::from(2)];
-        let param = Pcs::setup(n*4, 1, &mut rng).unwrap();
         let info = PlookupInfo{k, table, lookup};
+        let param = Pcs::setup(n*4, 1, &mut rng).unwrap();
         let (pp, _) = preprocess::<Fr, Pcs>(&param, &info).unwrap();
         let mut transcript = Keccak256Transcript::new(());
-        prove::<Fr,Pcs>(pp, &mut transcript).unwrap()
+        prove::<Fr,Pcs>(pp, &mut transcript).unwrap();
+        let proof = transcript.into_proof();
+        println!("{:#?}", proof);
     }
 }
