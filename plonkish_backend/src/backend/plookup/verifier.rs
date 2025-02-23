@@ -1,15 +1,16 @@
 use halo2_curves::ff::WithSmallOrderMulGroup;
-
 use crate::{
     pcs::{PolynomialCommitmentScheme,Evaluation},
     poly::univariate::UnivariatePolynomial,
-    util::{arithmetic::PrimeField, transcript::TranscriptRead},
+    util::{
+        arithmetic::PrimeField,
+        transcript::{TranscriptRead,InMemoryTranscript},
+    },
     Error,
 };
-
 use super::{
     PlookupVerifierParam,
-    util::{aggregate_field, aggregate_comm},
+    util::aggregate_field,
 };
 
 pub(super) fn verify<
@@ -17,7 +18,7 @@ pub(super) fn verify<
     Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>,
 >(
     vp: PlookupVerifierParam<F, Pcs>,
-    transcript: &mut impl TranscriptRead<Pcs::CommitmentChunk, F>,
+    transcript: &mut (impl TranscriptRead<Pcs::CommitmentChunk, F> + InMemoryTranscript),
 ) -> Result<(), Error> {
     let f_comm = Pcs::read_commitment(&vp.pcs, transcript)?;
     let h1_comm = Pcs::read_commitment(&vp.pcs, transcript)?;
@@ -31,7 +32,7 @@ pub(super) fn verify<
     let q_comm = Pcs::read_commitment(&vp.pcs, transcript)?;
     let zeta = &transcript.squeeze_challenge();
     // [f_eval, h1_eval, h2_eval, z_eval]
-    let mut evals = transcript.read_field_elements(4)?;
+    let evals = transcript.read_field_elements(4)?;
     // [h1_g_eval, h2_g_eval, z_g_eval]
     let g_evals = transcript.read_field_elements(3)?;
     let q_eval = compute_quotient_polynomial_eval(
@@ -39,21 +40,19 @@ pub(super) fn verify<
         &evals[0], &evals[1], &evals[2], &evals[3],
         &g_evals[0], &g_evals[1], &g_evals[2]
     );
-    evals.push(q_eval);
-    let eps = &transcript.squeeze_challenge();
-    let agg_comm = aggregate_comm::<F, Pcs>(eps, vec![&f_comm, &h1_comm, &h2_comm, &z_comm, &q_comm]);
-    let agg_g_comm = aggregate_comm::<F, Pcs>(eps, vec![&h1_comm, &h2_comm, &z_comm]);
-    let agg_eval = aggregate_field(eps, evals.iter().collect());
-    let agg_g_eval = aggregate_field(eps, g_evals.iter().collect());
-    // don't need to read these commitment because they're read in Pcs::verify()
-    // let agg_witness_comm = Pcs::read_commitment(&vp.pcs, transcript)?;
-    // let agg_g_witness_comm = Pcs::read_commitment(&vp.pcs, transcript)?;
-    // Pcs::verify(&vp.pcs, &agg_comm, zeta, &agg_eval, transcript)?;
-    // Pcs::verify(&vp.pcs, &agg_g_comm, &(vp.g*zeta), &agg_g_eval, transcript)?;
-    let agg_comms = [&agg_comm, &agg_g_comm];
-    let agg_points = [*zeta, vp.g*zeta];
-    let agg_evals = [Evaluation::new(0, 0, agg_eval), Evaluation::new(0, 0, agg_g_eval)];
-    Pcs::batch_verify(&vp.pcs, agg_comms, &agg_points, &agg_evals, transcript)?;
+    let batch_comms = [&f_comm, &h1_comm, &h2_comm, &z_comm, &q_comm];
+    let batch_points = [*zeta, vp.g*zeta];
+    let batch_evals = [
+        Evaluation::new(0, 0, evals[0]),
+        Evaluation::new(1, 0, evals[1]),
+        Evaluation::new(2, 0, evals[2]),
+        Evaluation::new(3, 0, evals[3]),
+        Evaluation::new(4, 0, q_eval),
+        Evaluation::new(1, 1, g_evals[0]),
+        Evaluation::new(2, 1, g_evals[1]),
+        Evaluation::new(3, 1, g_evals[2]),
+    ];
+    Pcs::batch_verify(&vp.pcs, batch_comms, &batch_points, &batch_evals, transcript)?;
     Ok(())
 }
 

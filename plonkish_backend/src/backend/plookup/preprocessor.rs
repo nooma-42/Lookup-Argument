@@ -1,9 +1,13 @@
 use crate::{
-    backend::plookup::{PlookupProverParam, PlookupVerifierParam, PlookupInfo},
     pcs::PolynomialCommitmentScheme,
     util::arithmetic::PrimeField,
     poly::univariate::UnivariatePolynomial,
     Error,
+};
+use super::{
+    PlookupProverParam,
+    PlookupVerifierParam,
+    PlookupInfo,
 };
 
 pub(super) fn preprocess<F: PrimeField, Pcs: PolynomialCommitmentScheme<F, Polynomial = UnivariatePolynomial<F>>>(
@@ -50,13 +54,10 @@ pub(super) fn get_root_of_power_of_2_order<F: PrimeField>(n: u32) -> Result<F, E
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use halo2_curves::bn256::{Bn256, Fr};
     use crate::{
-        backend::plookup::{preprocessor::preprocess, PlookupInfo},
-        halo2_curves::bn256::{Bn256, Fr},
-        pcs::{
-            PolynomialCommitmentScheme,
-            univariate::UnivariateKzg,
-        },
+        pcs::univariate::UnivariateKzg,
         util::test::std_rng,
     };
 
