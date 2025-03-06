@@ -290,13 +290,15 @@ mod tests {
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
         let sorted = sorted_by_table(&table, &lookup);
         let h1 = sorted[..4].to_vec();
-        let h2 = sorted[4..].to_vec();
+        let h2 = sorted[3..].to_vec();
         let beta = Fr::from(1);
         let gamma = Fr::from(2);
-        let t_poly = Poly::lagrange(table.clone());
-        let f_poly = Poly::lagrange(lookup.clone());
-        let h1_poly = Poly::lagrange(h1.clone());
-        let h2_poly = Poly::lagrange(h2.clone());
+        let t_poly = Poly::lagrange(table.clone()).ifft();
+        let mut lookup_clone = lookup.clone();
+        lookup_clone.push(Fr::from(2)); // pad for polynomial
+        let f_poly = Poly::lagrange(lookup_clone).ifft();
+        let h1_poly = Poly::lagrange(h1.clone()).ifft();
+        let h2_poly = Poly::lagrange(h2.clone()).ifft();
         let z = compute_inner_table(
             &beta,
             &gamma,
@@ -304,7 +306,7 @@ mod tests {
             &table,
             &sorted,
         );
-        let z_poly = Poly::lagrange(z.clone());
+        let z_poly = Poly::lagrange(z.clone()).ifft();
         let delta = Fr::from(3);
         let g = get_root_of_power_of_2_order(2).unwrap();
         let poly = compute_quotient_polynomial(
