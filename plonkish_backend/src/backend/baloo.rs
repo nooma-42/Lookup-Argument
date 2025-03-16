@@ -1,85 +1,208 @@
-use halo2_curves::bn256::{Bn256, Fr};
+use rand::rngs::OsRng;
+use std::{fmt::Debug, marker::PhantomData};
+use serde::{Deserialize, Serialize};
+
+use halo2_curves::{bn256::{ pairing, Bn256, Fr, G1Affine, G2Affine, G2Prepared, Gt, G1, G2}, pairing::MillerLoopResult};
 
 use crate::{
-    backend::baloo::preprocessor::preprocess,
-    pcs::univariate::UnivariateKzg,     
+    poly::Polynomial,
     poly::univariate::UnivariatePolynomial,
+    backend::cq::generate_table_and_lookup,
+    pcs::{
+        PolynomialCommitmentScheme,
+        Additive,
+        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
+    },
+    util::{
+        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
+        test::std_rng,
+        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
+    },
+    Error,
 };
 
 pub mod preprocessor;
 pub mod prover;
-pub mod util;
 pub mod verifier;
-use prover::Prover;
-use verifier::Verifier;
-type Pcs = UnivariateKzg<Bn256>;
+pub mod util;
 
-use std::cmp::max;
-use rand::thread_rng; 
-use rand::seq::SliceRandom; 
-use std::collections::HashSet;
+// Specific implementation for Bn256 curves
+#[derive(Clone, Debug)]
+pub struct BalooProverParam {
+    param: UnivariateKzgParam<Bn256>,
+    pp: UnivariateKzgProverParam<Bn256>,
+    table: Vec<Fr>,
+    d: usize,
+}
 
-use std::time::Instant;
+#[derive(Clone, Debug)]
+pub struct BalooVerifierParam {
+    vp: UnivariateKzgVerifierParam<Bn256>,
+}
 
+#[derive(Clone, Debug)]
+pub struct BalooInfo {
+    table: Vec<Fr>,
+    lookup: Vec<Fr>,
+}
 
-pub fn test_baloo_by_input(table:Vec<Fr>,lookup:Vec<Fr>)->Vec<String> {
-    let mut timings: Vec<String> = vec![];
+#[derive(Clone, Debug)]
+pub struct Baloo;
 
-    let m = lookup.len();
-        let t = table.len();
-        let k=(t as f64).log2();
-        let poly_size = max(t, m).next_power_of_two() * 2;
+impl Baloo {
+    // Main preprocess function that matches the original API
+    pub fn preprocess(
+        t: usize, 
+        m: usize
+    ) -> Result<
+        (
+            UnivariateKzgParam<Bn256>,
+            UnivariateKzgProverParam<Bn256>,
+            UnivariateKzgVerifierParam<Bn256>,
+        ),
+        Error
+    > {
+        preprocessor::preprocess(t, m)
+    }
+
+    // Alternative preprocess function that takes an info struct
+    pub fn preprocess_with_info(
+        info: &BalooInfo,
+    ) -> Result<
+        (
+            BalooProverParam,
+            BalooVerifierParam,
+        ),
+        Error
+    > {
+        let m = info.lookup.len();
+        let t = info.table.len();
+        
+        let (param, pp, vp) = 
+            preprocessor::preprocess(t, m)?;
+        
+        let poly_size = std::cmp::max(t, m).next_power_of_two() * 2;
         let d = poly_size - 2;
+        
+        Ok((
+            BalooProverParam {
+                param: param.clone(),
+                pp,
+                table: info.table.clone(),
+                d,
+            },
+            BalooVerifierParam {
+                vp,
+            },
+        ))
+    }
 
-        // 1. setup and preprocess
-        let start = Instant::now();
-        let (param, pp, vp) = preprocess(t, m).unwrap();
-        assert_eq!(poly_size, 2_usize.pow(pp.k() as u32));
-        let duration1 = start.elapsed();
-        timings.push(format!("k={k}, setup and preprocess time: {}ms",duration1.as_millis()));
-        println!("------------?Setup and preprocess: {}ms-----------",duration1.as_millis());
+    pub fn prove(
+        table: &Vec<Fr>,
+        param: &UnivariateKzgParam<Bn256>,
+        pp: &UnivariateKzgProverParam<Bn256>,
+        lookup: &Vec<Fr>,
+    ) -> Vec<u8> {
+        let prover = prover::Prover::new(table, param, pp);
+        prover.prove(lookup)
+    }
 
-        // 2. generate proof
-        let start = Instant::now();
-        let prover = Prover::new(&table, &param, &pp);
-        let proof = prover.prove(&lookup);
-        let duration2 = start.elapsed();
-        timings.push(format!("k={k}, prove time: {}ms", duration2.as_millis()));
-        println!("------------prove: {}ms------------", duration2.as_millis());
-        println!("proof: {:?}", proof);
+    pub fn prove_with_param(
+        pp: &BalooProverParam,
+        lookup: &Vec<Fr>,
+    ) -> Vec<u8> {
+        let table_vec = pp.table.clone(); // Clone to avoid lifetime issues
+        let lookup_vec = lookup.clone();
+        let prover = prover::Prover::new(&table_vec, &pp.param, &pp.pp);
+        prover.prove(&lookup_vec)
+    }
 
-        let scalar_0 = Fr::from(0 as u64);
-        let scalar_1 = Fr::from(1 as u64);
-
-        // 3.1 prepare for verifier
-        // z_h(x) = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
-        let z_h_poly_coeffs = vec![scalar_1.neg()]
-            .into_iter()
-            .chain(vec![scalar_0; t - 1])
-            .chain(vec![scalar_1])
-            .collect();
+    pub fn verify(
+        vp: &UnivariateKzgVerifierParam<Bn256>,
+        proof: &Vec<u8>,
+        t_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_m_exponent_poly_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_comm_2: &UnivariateKzgCommitment<G2Affine>,
+        x_exponent_poly_2_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_2_comm_2: &UnivariateKzgCommitment<G2Affine>,
+        m: usize,
+    ) -> bool {
+        let verifier = verifier::Verifier::new(vp);
+        verifier.verify(
+            proof,
+            t_comm_1,
+            z_h_comm_1,
+            phi_comm_1,
+            x_m_exponent_poly_comm_1,
+            x_exponent_poly_comm_2,
+            x_exponent_poly_2_comm_1,
+            x_exponent_poly_2_comm_2,
+            m
+        )
+    }
+    
+    pub fn verify_with_param(
+        vp: &BalooVerifierParam,
+        proof: &Vec<u8>,
+        t_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        z_h_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        phi_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_m_exponent_poly_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_comm_2: &UnivariateKzgCommitment<G2Affine>,
+        x_exponent_poly_2_comm_1: &UnivariateKzgCommitment<G1Affine>,
+        x_exponent_poly_2_comm_2: &UnivariateKzgCommitment<G2Affine>,
+        m: usize,
+    ) -> bool {
+        let verifier = verifier::Verifier::new(&vp.vp);
+        verifier.verify(
+            proof,
+            t_comm_1,
+            z_h_comm_1,
+            phi_comm_1,
+            x_m_exponent_poly_comm_1,
+            x_exponent_poly_comm_2,
+            x_exponent_poly_2_comm_1,
+            x_exponent_poly_2_comm_2,
+            m
+        )
+    }
+    
+    // Helper method to prepare verification data
+    pub fn prepare_verification_data(
+        param: &UnivariateKzgParam<Bn256>,
+        pp: &UnivariateKzgProverParam<Bn256>,
+        table: &[Fr],
+        lookup: &[Fr],
+        m: usize,
+        t: usize,
+        d: usize,
+    ) -> (
+        UnivariateKzgCommitment<G1Affine>, // t_comm_1
+        UnivariateKzgCommitment<G1Affine>, // z_h_comm_1
+        UnivariateKzgCommitment<G1Affine>, // phi_comm_1
+        UnivariateKzgCommitment<G1Affine>, // x_m_exponent_poly_comm_1
+        UnivariateKzgCommitment<G2Affine>, // x_exponent_poly_comm_2
+        UnivariateKzgCommitment<G1Affine>, // x_exponent_poly_2_comm_1
+        UnivariateKzgCommitment<G2Affine>, // x_exponent_poly_2_comm_2
+    ) {
+        let scalar_0 = Fr::zero();
+        let scalar_1 = Fr::one();
+        
+        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
-        // [z_h(x)]1
-        let z_h_comm_1 = Pcs::commit_monomial(&pp, &z_h_poly.coeffs());
-        // t(x)
-        let t_poly = UnivariatePolynomial::lagrange(table.clone()).ifft();
-        // [t(x)]1
-        let t_comm_1 = Pcs::commit_monomial(&pp, &t_poly.coeffs());
+        let z_h_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &z_h_poly.coeffs());
+        
+        let t_poly = UnivariatePolynomial::lagrange(table.to_vec()).ifft();
+        let t_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &t_poly.coeffs());
 
-        // φ(x)
-        let phi_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
-        let phi_comm_1 = Pcs::commit_monomial(&pp, &phi_poly.coeffs());
-        // todo: cached all [x^s]1, [x^s]2?
+        let phi_poly = UnivariatePolynomial::lagrange(lookup.to_vec()).ifft();
+        let phi_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &phi_poly.coeffs());
+        
         // X^m
-        let x_m_exponent_poly = UnivariatePolynomial::monomial(
-            vec![scalar_0; m]
-                .into_iter()
-                .chain(vec![scalar_1])
-                .collect(),
-        );
-        // [X^m]1
-        let x_m_exponent_poly_comm_1 =
-            Pcs::commit_monomial(&pp, &x_m_exponent_poly.clone().coeffs());
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        let x_m_exponent_poly_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &x_m_exponent_poly.clone().coeffs());
 
         // X^(d-m+1)
         let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1]
@@ -88,8 +211,7 @@ pub fn test_baloo_by_input(table:Vec<Fr>,lookup:Vec<Fr>)->Vec<String> {
             .collect();
         let x_exponent_poly = UnivariatePolynomial::monomial(coeffs_x_exponent_poly);
         // [X^(d-m+1)]2
-        let x_exponent_poly_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly.coeffs());
-        println!("x_exponent_poly_comm_2: {:?}", x_exponent_poly_comm_2);
+        let x_exponent_poly_comm_2 = UnivariateKzg::<Bn256>::commit_monomial_g2(param, &x_exponent_poly.coeffs());
 
         // X^(d-m+2)
         let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2]
@@ -97,15 +219,58 @@ pub fn test_baloo_by_input(table:Vec<Fr>,lookup:Vec<Fr>)->Vec<String> {
             .chain(vec![scalar_1])
             .collect();
         let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
-        // [X^(d-m+2)]1
-        let x_exponent_poly_2_comm_1 = Pcs::commit_monomial(&pp, &x_exponent_poly_2.coeffs());
-        // [X^(d-m+2)]2
-        let x_exponent_poly_2_comm_2 = Pcs::commit_monomial_g2(&param, &x_exponent_poly_2.coeffs());
-
-        // 3.2 verifier to verify
-        let start = Instant::now();
-        let verifier = Verifier::new(&vp);
-        verifier.verify(
+        let x_exponent_poly_2_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &x_exponent_poly_2.coeffs());
+        let x_exponent_poly_2_comm_2 = UnivariateKzg::<Bn256>::commit_monomial_g2(param, &x_exponent_poly_2.coeffs());
+        
+        (
+            t_comm_1, 
+            z_h_comm_1, 
+            phi_comm_1, 
+            x_m_exponent_poly_comm_1, 
+            x_exponent_poly_comm_2, 
+            x_exponent_poly_2_comm_1, 
+            x_exponent_poly_2_comm_2
+        )
+    }
+    
+    // Run the full Baloo protocol with given table and lookup 
+    pub fn test_baloo_by_input(table: Vec<Fr>, lookup: Vec<Fr>) -> Vec<String> {
+        let mut timings: Vec<String> = vec![];
+        
+        let start_total = std::time::Instant::now();
+        
+        let m = lookup.len();
+        let t = table.len();
+        let poly_size = std::cmp::max(t, m).next_power_of_two() * 2;
+        let d = poly_size - 2;
+        
+        // 1. Setup
+        let start = std::time::Instant::now();
+        let (param, pp, vp) = Baloo::preprocess(t, m).unwrap();
+        let duration1 = start.elapsed();
+        timings.push(format!("Setup and preprocess: {}ms", duration1.as_millis()));
+        
+        // 2. Generate proof
+        let start = std::time::Instant::now();
+        let proof = Baloo::prove(&table, &param, &pp, &lookup);
+        let duration2 = start.elapsed();
+        timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        
+        // 3. Prepare verification data
+        let start = std::time::Instant::now();
+        let (
+            t_comm_1, 
+            z_h_comm_1, 
+            phi_comm_1, 
+            x_m_exponent_poly_comm_1, 
+            x_exponent_poly_comm_2, 
+            x_exponent_poly_2_comm_1, 
+            x_exponent_poly_2_comm_2
+        ) = Baloo::prepare_verification_data(&param, &pp, &table, &lookup, m, t, d);
+        
+        // 4. Verify
+        let result = Baloo::verify(
+            &vp,
             &proof,
             &t_comm_1,
             &z_h_comm_1,
@@ -116,65 +281,157 @@ pub fn test_baloo_by_input(table:Vec<Fr>,lookup:Vec<Fr>)->Vec<String> {
             &x_exponent_poly_2_comm_2,
             m,
         );
+        
+        assert!(result);
         let duration3 = start.elapsed();
-        timings.push(format!("k={k}, verify time: {}ms", duration3.as_millis()));
-        println!("------------verify: {}ms------------", duration3.as_millis());
-        println!("Finished to verify: baloo");
-        println!("------------------------------------");
-        let total_duration=duration1+duration2+duration3;
-        timings.push(format!("k={k}, total time: {}ms", total_duration.as_millis()));
+        timings.push(format!("Verify: {}ms", duration3.as_millis()));
+        
+        let total_duration = start_total.elapsed();
+        timings.push(format!("Total time: {}ms", total_duration.as_millis()));
+        
         timings
+    }
 }
-
-fn gengerate_table_and_lookup(k:usize)-> (Vec<Fr>, Vec<Fr>)  {  
-    let size = 1 << k; // size = 2^k
-    let lookup_size=size;
-    let deduplication_size = 1 << (k-2); // caculate deduplication_size of lookup=2^(k-2)
-    // （1）generate table
-    let table: Vec<usize> = (0..size).collect();
-    // （2）generate lookup
-    let mut rng = thread_rng();
-    let selected_values: HashSet<usize> = table
-        .choose_multiple(&mut rng, deduplication_size) 
-        .cloned() 
-        .collect();
-    let mut lookup: Vec<usize> = selected_values
-        .iter()
-        .cloned() 
-        .cycle() 
-        .take(lookup_size) 
-        .collect();
-    lookup.shuffle(&mut rng);
-
-    // （3）print table and lookup 
-    println!("Table: {:?}", table);
-    println!("Lookup: {:?}", lookup);
-    let unique_lookup: HashSet<usize> = lookup.iter().cloned().collect();
-    println!("Unique values in lookup: {:?}", unique_lookup);
-    println!("Number of unique values in lookup: {}", unique_lookup.len());
-    // （4）put table and lookup into Fr
-    let table_fr: Vec<Fr> = table.iter().map(|&x| Fr::from(x as u64)).collect();
-    let lookup_fr: Vec<Fr> = lookup.iter().map(|&x| Fr::from(x as u64)).collect();
-    (table_fr,lookup_fr)
-}
-
-pub fn test_baloo_by_k(k:usize)->Vec<String> {
-    let mut timings: Vec<String> = vec![];
-    let (table,lookup)=gengerate_table_and_lookup(k);
-    timings=test_baloo_by_input(table,lookup);
-    timings
-}
-
 
 #[cfg(test)]
 mod tests {
-    use super::*;   
- #[test]
-     fn test_baloo() {
-        let table_int=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63];
-        let lookup_int=[17, 5, 37, 60, 44, 23, 55, 36, 13, 20, 38, 13, 38, 55, 13, 52, 5, 44, 36, 14, 21, 36, 23, 55, 44, 21, 17, 37, 14, 23, 31, 3, 17, 38, 21, 31, 52, 5, 23, 14, 14, 20, 31, 20, 55, 20, 3, 36, 60, 13, 52, 17, 3, 52, 21, 37, 44, 5, 60, 3, 38, 31, 60, 37]; 
-        let table: Vec<Fr> = table_int.iter().map(|&x| Fr::from(x as u64)).collect();
-        let lookup: Vec<Fr> = lookup_int.iter().map(|&x| Fr::from(x as u64)).collect();
-        test_baloo_by_input(table,lookup);       
+    use super::*;
+    type Pcs = UnivariateKzg<Bn256>;
+    use std::cmp::max;
+    use std::time::Instant;
+    
+    #[test]
+    fn test_baloo() {
+        // Generate table and lookup
+        let (table, lookup) = generate_table_and_lookup(8, 4);
+    
+        let m = lookup.len();
+        let t = table.len();
+        let poly_size = max(t, m).next_power_of_two() * 2;
+        let d = poly_size - 2;
+
+        // 1. Setup
+        let start = Instant::now();
+        let (param, pp, vp) = Baloo::preprocess(t, m).unwrap();
+        let duration1 = start.elapsed();
+        println!("\n ------------Setup and preprocess: {}ms----------- \n", duration1.as_millis());
+
+        // 2. Generate proof
+        let start = Instant::now();
+        let proof = Baloo::prove(&table, &param, &pp, &lookup);
+        println!("proof: {:?}", proof);
+        let duration2 = start.elapsed();
+        println!("\n ------------prove: {}ms----------- \n", duration2.as_millis());
+
+        // 3. Prepare verification data
+        let start = Instant::now();
+        let (
+            t_comm_1, 
+            z_h_comm_1, 
+            phi_comm_1, 
+            x_m_exponent_poly_comm_1, 
+            x_exponent_poly_comm_2, 
+            x_exponent_poly_2_comm_1, 
+            x_exponent_poly_2_comm_2
+        ) = Baloo::prepare_verification_data(&param, &pp, &table, &lookup, m, t, d);
+        
+        // 4. Verify the proof
+        let result = Baloo::verify(
+            &vp,
+            &proof,
+            &t_comm_1,
+            &z_h_comm_1,
+            &phi_comm_1,
+            &x_m_exponent_poly_comm_1,
+            &x_exponent_poly_comm_2,
+            &x_exponent_poly_2_comm_1,
+            &x_exponent_poly_2_comm_2,
+            m
+        );
+        
+        let duration3 = start.elapsed();
+        println!("\n ------------verify: {}ms----------- \n", duration3.as_millis());
+
+        assert!(result);
+        println!("Finished to verify: baloo");
+    }
+    
+    #[test]
+    fn test_baloo_with_info() {
+        // Generate table and lookup
+        let (table, lookup) = generate_table_and_lookup(8, 4);
+    
+        let m = lookup.len();
+        let t = table.len();
+        let poly_size = max(t, m).next_power_of_two() * 2;
+        let d = poly_size - 2;
+        
+        // 1. Setup using the info struct API
+        let start = Instant::now();
+        
+        let info = BalooInfo {
+            table: table.clone(),
+            lookup: lookup.clone(),
+        };
+        
+        let (pp, vp) = Baloo::preprocess_with_info(&info).unwrap();
+        let duration1 = start.elapsed();
+        println!("\n ------------Setup and preprocess with info: {}ms----------- \n", duration1.as_millis());
+
+        // 2. Generate proof using the new API
+        let start = Instant::now();
+        let proof = Baloo::prove_with_param(&pp, &lookup);
+        println!("proof: {:?}", proof);
+        let duration2 = start.elapsed();
+        println!("\n ------------prove with param: {}ms----------- \n", duration2.as_millis());
+
+        // 3. Prepare verification data and verify
+        let start = Instant::now();
+        
+        let (
+            t_comm_1, 
+            z_h_comm_1, 
+            phi_comm_1, 
+            x_m_exponent_poly_comm_1, 
+            x_exponent_poly_comm_2, 
+            x_exponent_poly_2_comm_1, 
+            x_exponent_poly_2_comm_2
+    ) = Baloo::prepare_verification_data(&pp.param, &pp.pp, &table, &lookup, m, t, d);
+        
+        // Verify the proof
+        let result = Baloo::verify_with_param(
+            &vp,
+            &proof,
+            &t_comm_1,
+            &z_h_comm_1,
+            &phi_comm_1,
+            &x_m_exponent_poly_comm_1,
+            &x_exponent_poly_comm_2,
+            &x_exponent_poly_2_comm_1,
+            &x_exponent_poly_2_comm_2,
+            m
+        );
+        
+        let duration3 = start.elapsed();
+        println!("\n ------------verify with param: {}ms----------- \n", duration3.as_millis());
+
+        assert!(result);
+        println!("Finished to verify: baloo with info");
+    }
+    
+    #[test]
+    fn test_baloo_by_input() {
+        let table_size = 2_usize.pow(6);
+        let lookup_size = 4;
+        
+        // Generate table and lookup
+        let (table, lookup) = generate_table_and_lookup(table_size, lookup_size);
+        
+        let timings = Baloo::test_baloo_by_input(table, lookup);
+        
+        // Print all timing information
+        for timing in &timings {
+            println!("{}", timing);
+        }
     }
 }
