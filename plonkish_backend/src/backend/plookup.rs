@@ -1,12 +1,13 @@
-use std::{fmt::Debug, hash::Hash, marker::PhantomData};
+use std::{fmt::Debug, hash::Hash, marker::PhantomData, time::Instant};
 use halo2_curves::ff::WithSmallOrderMulGroup;
 use crate::{
     poly::univariate::UnivariatePolynomial,
     pcs::PolynomialCommitmentScheme,
+    backend::cq::generate_table_and_lookup,
     util::{
         arithmetic::PrimeField,
         Deserialize, DeserializeOwned, Serialize,
-        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite},
+        transcript::{InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
     },
     Error,
 };
@@ -81,6 +82,61 @@ where
     }
 }
 
+// Concrete implementation for BN256/Fr
+use halo2_curves::bn256::{Bn256, Fr};
+use crate::pcs::univariate::UnivariateKzg;
+
+impl Plookup<Fr, UnivariateKzg<Bn256>> {
+    // Run the full Plookup protocol with given table and lookup
+    pub fn test_plookup_by_input(
+        table: Vec<Fr>, 
+        lookup: Vec<Fr>
+    ) -> Vec<String> {
+        let mut timings: Vec<String> = vec![];
+        
+        let start_total = Instant::now();
+        
+        // Calculate k value based on max of table and lookup size
+        let size = std::cmp::max(table.len(), lookup.len()).next_power_of_two();
+        let k = (size as f64).log2() as u32;
+        let n = 1 << k;
+        
+        // 1. Setup
+        let info = PlookupInfo {
+            k,
+            table: table.clone(),
+            lookup: lookup.clone(),
+        };
+        
+        let start = Instant::now();
+        let mut rng = crate::util::test::std_rng();
+        let param = UnivariateKzg::<Bn256>::setup(n*4, 1, &mut rng).unwrap();
+        let (pp, vp) = Self::preprocess(&param, &info).unwrap();
+        let duration1 = start.elapsed();
+        timings.push(format!("Setup and preprocess: {}ms", duration1.as_millis()));
+        
+        // 2. Prove
+        let start = Instant::now();
+        let mut transcript = Keccak256Transcript::new(());
+        Self::prove(pp, &mut transcript).unwrap();
+        let proof = transcript.into_proof();
+        let duration2 = start.elapsed();
+        timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        
+        // 3. Verify
+        let start = Instant::now();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+        Self::verify(vp, &mut transcript).unwrap();
+        let duration3 = start.elapsed();
+        timings.push(format!("Verify: {}ms", duration3.as_millis()));
+        
+        let total_duration = start_total.elapsed();
+        timings.push(format!("Total time: {}ms", total_duration.as_millis()));
+        
+        timings
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -118,5 +174,25 @@ mod test {
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
         // Verify
         Pb::verify(vp, &mut transcript).unwrap();
+    }
+
+    #[test]
+    fn test_plookup_by_input() {
+        let table_size = 2_usize.pow(6);
+        let lookup_size = 4;
+        
+        // Generate table and lookup
+        let (table, lookup) = generate_table_and_lookup(table_size, lookup_size);
+        
+        // Convert to Fr type since we're using the Bn256 curve
+        let table_fr = table.iter().map(|&v| v.clone()).collect();
+        let lookup_fr = lookup.iter().map(|&v| v.clone()).collect();
+        
+        let timings = Pb::test_plookup_by_input(table_fr, lookup_fr);
+        
+        // Print all timing information
+        for timing in &timings {
+            println!("{}", timing);
+        }
     }
 }
