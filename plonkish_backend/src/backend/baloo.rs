@@ -205,13 +205,19 @@ impl Baloo {
         let x_m_exponent_poly_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &x_m_exponent_poly.clone().coeffs());
 
         // X^(d-m+1)
-        let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let coeffs_x_exponent_poly = vec![scalar_0; d - m + 1]
+            .into_iter()
+            .chain(vec![scalar_1])
+            .collect();
         let x_exponent_poly = UnivariatePolynomial::monomial(coeffs_x_exponent_poly);
         // [X^(d-m+1)]2
         let x_exponent_poly_comm_2 = UnivariateKzg::<Bn256>::commit_monomial_g2(param, &x_exponent_poly.coeffs());
 
         // X^(d-m+2)
-        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2].into_iter().chain(vec![scalar_1]).collect();
+        let coeffs_x_exponent_poly_2 = vec![scalar_0; d - m + 2]
+            .into_iter()
+            .chain(vec![scalar_1])
+            .collect();
         let x_exponent_poly_2 = UnivariatePolynomial::monomial(coeffs_x_exponent_poly_2);
         let x_exponent_poly_2_comm_1 = UnivariateKzg::<Bn256>::commit_monomial(pp, &x_exponent_poly_2.coeffs());
         let x_exponent_poly_2_comm_2 = UnivariateKzg::<Bn256>::commit_monomial_g2(param, &x_exponent_poly_2.coeffs());
@@ -273,7 +279,7 @@ impl Baloo {
             &x_exponent_poly_comm_2,
             &x_exponent_poly_2_comm_1,
             &x_exponent_poly_2_comm_2,
-            m
+            m,
         );
         
         assert!(result);
@@ -303,7 +309,7 @@ mod tests {
         let t = table.len();
         let poly_size = max(t, m).next_power_of_two() * 2;
         let d = poly_size - 2;
-
+        
         // 1. Setup
         let start = Instant::now();
         let (param, pp, vp) = Baloo::preprocess(t, m).unwrap();
