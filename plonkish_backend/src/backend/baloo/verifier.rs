@@ -1,35 +1,30 @@
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul};
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
-    poly::{Polynomial, univariate::UnivariatePolynomial},
-    backend::baloo::{
-      util::{multi_pairing, log_2},
-      preprocessor::preprocess,
-    },
+    backend::baloo::util::{log_2, multi_pairing},
     pcs::{
-        PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
+        univariate::{
+            UnivariateKzg, UnivariateKzgCommitment,
+            UnivariateKzgVerifierParam,
+        }, PolynomialCommitmentScheme,
     },
+    poly::{univariate::UnivariatePolynomial, Polynomial},
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, variable_base_msm, barycentric_weights},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
-    }
+        arithmetic::{root_of_unity, variable_base_msm, Field},
+        transcript::{
+            FieldTranscript, FieldTranscriptRead, G2TranscriptRead, InMemoryTranscript, Keccak256Transcript,
+        },
+    },
 };
+use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
+use std::ops::Mul;
 
 type Pcs = UnivariateKzg<Bn256>;
 
 pub struct Verifier<'b> {
-    vp: &'b UnivariateKzgVerifierParam<Bn256>
+    vp: &'b UnivariateKzgVerifierParam<Bn256>,
 }
 
-impl Verifier<'_>
-{
-    pub fn new<'a>(
-        vp: &'a UnivariateKzgVerifierParam<Bn256>
-    ) -> Verifier<'a> {
+impl Verifier<'_> {
+    pub fn new(vp: &UnivariateKzgVerifierParam<Bn256>) -> Verifier<'_> {
         Verifier { vp }
     }
 
@@ -45,41 +40,33 @@ impl Verifier<'_>
         x_exponent_poly_2_comm_2: &UnivariateKzgCommitment<G2Affine>,
         m: usize,
     ) -> bool {
-        let scalar_0 = Fr::from(0 as u64);
-        let scalar_1 = Fr::from(1 as u64);
+        let scalar_0 = Fr::from(0_u64);
+        let scalar_1 = Fr::from(1_u64);
         let vp = self.vp;
         let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
 
         // read pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_i_comm_1.clone());
-        let v_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("v_comm_1: {:?}", v_comm_1);
+        let v_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
         // g2
         let z_i_comm_2: G2Affine = transcript.read_commitment_g2().unwrap();
-        println!("z_i_comm_2: {:?}", UnivariateKzgCommitment(z_i_comm_2));
 
-        let t_i_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("t_i_comm_1: {:?}", t_i_comm_1);
+        let t_i_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
         let alpha: Fr = transcript.squeeze_challenge();
 
         // read pi_2 = (d_comm_1.clone(), r_comm_1.clone(), q_d_comm_1.clone());
-        let d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("d_comm_1: {:?}", d_comm_1);
+        let d_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let r_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("r_comm_1: {:?}", r_comm_1);
+        let r_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let q_d_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("q_d_comm_1: {:?}", q_d_comm_1);
+        let q_d_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
         let beta: Fr = transcript.squeeze_challenge();
 
         // read pi_3 = (e_comm_1.clone(), q_e_comm_1.clone());
-        let e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("e_comm_1: {:?}", e_comm_1);
+        let e_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let q_e_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("q_e_comm_1: {:?}", q_e_comm_1);
+        let q_e_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
         let gamma: Fr = transcript.squeeze_challenge();
         let zeta: Fr = transcript.squeeze_challenge();
@@ -88,34 +75,24 @@ impl Verifier<'_>
 
         // read pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
         let v1: Fr = transcript.read_field_element().unwrap();
-        println!("v1: {:?}", v1);
 
         let v2: Fr = transcript.read_field_element().unwrap();
-        println!("v2: {:?}", v2);
 
         let v3: Fr = transcript.read_field_element().unwrap();
-        println!("v3: {:?}", v3);
 
         let v4: Fr = transcript.read_field_element().unwrap();
-        println!("v4: {:?}", v4);
 
         let v5: Fr = transcript.read_field_element().unwrap();
-        println!("v5: {:?}", v5);
 
-        let a_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("a_comm_1: {:?}", a_comm_1);
+        let a_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let w1_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("w1_comm_1: {:?}", w1_comm_1);
+        let w1_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let w2_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("w2_comm_1: {:?}", w2_comm_1);
+        let w2_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let w3_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("w3_comm_1: {:?}", w3_comm_1);
+        let w3_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
-        let w4_comm_1 = Pcs::read_commitment(&vp, &mut transcript).unwrap();
-        println!("w4_comm_1: {:?}", w4_comm_1);
+        let w4_comm_1 = Pcs::read_commitment(vp, &mut transcript).unwrap();
 
         // Construct X^m - 1, [-1, 0, 0, ..., 1], m - 1 0s in between
         let z_v_values: Vec<Fr> = vec![scalar_1.neg()]
@@ -152,8 +129,13 @@ impl Verifier<'_>
         // ])
         let subtable_msm_lhs = variable_base_msm(
             &[scalar_1, -scalar_1, gamma],
-            &[t_comm_1.clone().to_affine(), t_i_comm_1.clone().to_affine(), z_h_comm_1.clone().to_affine()]
-        ).into();
+            &[
+                t_comm_1.clone().to_affine(),
+                t_i_comm_1.clone().to_affine(),
+                z_h_comm_1.clone().to_affine(),
+            ],
+        )
+        .into();
         let subtable_msm_rhs = a_comm_1.clone().to_affine();
         let subtable_pairing_lhs = pairing(&subtable_msm_lhs, &g2_affine.clone());
         let subtable_pairing_rhs = pairing(&subtable_msm_rhs, &z_i_comm_2_affine.clone());
@@ -168,14 +150,16 @@ impl Verifier<'_>
         // calculate right hand side pairing
         let w1_rhs1: G1Affine = variable_base_msm(
             &[scalar_1, -v1, gamma, -gamma.mul(v2)],
-            &[e_comm_1.clone().to_affine(), g1_affine.clone(), phi_comm_1.clone().to_affine(), g1_affine.clone()]
-        ).into();
-        let w1_rhs2: G1Affine = variable_base_msm(
-            &[alpha],
-            &[w1_comm_1_affine.clone()]
-        ).into();
+            &[
+                e_comm_1.clone().to_affine(),
+                g1_affine,
+                phi_comm_1.clone().to_affine(),
+                g1_affine,
+            ],
+        )
+        .into();
+        let w1_rhs2: G1Affine = variable_base_msm(&[alpha], &[w1_comm_1_affine]).into();
         let x_exponent_poly_comm_2_affine = x_exponent_poly_comm_2.clone().to_affine();
-        print!("w1_rhs2: {:?}\n", w1_rhs2);
         assert_eq!(vp.g2(), g2_affine);
         let g1_terms = vec![w1_rhs1, w1_rhs2];
         let g2_terms = vec![x_exponent_poly_comm_2_affine, g2_affine];
@@ -199,8 +183,9 @@ impl Verifier<'_>
         // ])
         let w2_rhs1 = variable_base_msm(
             &[gamma_2, scalar_1],
-            &[x_exponent_poly_2_comm_1_affine.clone(), g1_affine.clone()]
-        ).into();
+            &[x_exponent_poly_2_comm_1_affine, g1_affine],
+        )
+        .into();
 
         // w2_rhs2 = ec_lincomb([
         //     (R_comm_1, gamma ** 3),
@@ -208,24 +193,30 @@ impl Verifier<'_>
         // ])
         let w2_rhs2 = variable_base_msm(
             &[gamma_3, -gamma_2],
-            &[r_comm_1_affine.clone(), x_m_exponent_poly_comm_1_affine.clone()],
-        ).into();
+            &[
+                r_comm_1_affine,
+                x_m_exponent_poly_comm_1_affine,
+            ],
+        )
+        .into();
 
         // w2_rhs3 = ec_lincomb([
         //     (R_comm_1, gamma),
         //     (b.G1, -v3),
         // ])
-        let w2_rhs3 = variable_base_msm(
-            &[gamma, -v3],
-            &[r_comm_1_affine.clone(), g1_affine.clone()]
-        ).into();
+        let w2_rhs3 =
+            variable_base_msm(&[gamma, -v3], &[r_comm_1_affine, g1_affine]).into();
         // assert b.pairing(x2, w2_comm_1) == b.pairing(z_I_comm_2, w2_rhs1) * b.pairing(
         //     x_exp_poly_2_comm_2, w2_rhs2) * b.pairing(b.G2, w2_rhs3), "w2 paring check failed"
         // print("Finished to verify: w2")
 
         let w2_lhs = pairing(&w2_comm_1_affine, &vp.s_g2());
         let w2_pairing_g1_terms = vec![w2_rhs1, w2_rhs2, w2_rhs3];
-        let w2_pairing_g2_terms = vec![z_i_comm_2_affine.clone(), x_exponent_poly_2_comm_2_affine.clone(), g2_affine.clone()];
+        let w2_pairing_g2_terms = vec![
+            z_i_comm_2_affine,
+            x_exponent_poly_2_comm_2_affine,
+            g2_affine,
+        ];
         let rhs = multi_pairing(&w2_pairing_g1_terms, &w2_pairing_g2_terms);
         assert_eq!(w2_lhs, rhs);
         println!("Finished to verify: w2");
@@ -235,20 +226,29 @@ impl Verifier<'_>
         // # calculate commitment [P_D(X)]1
         let p_d_comm_1_affine: G1Affine = variable_base_msm(
             &[v1, -v2, -scalar_1, -v4],
-            &[t_i_comm_1.clone().to_affine(), g1_affine.clone(), r_comm_1_affine.clone(), q_d_comm_1.clone().to_affine()]
-        ).into();
+            &[
+                t_i_comm_1.clone().to_affine(),
+                g1_affine,
+                r_comm_1_affine,
+                q_d_comm_1.clone().to_affine(),
+            ],
+        )
+        .into();
         let w3_rhs1 = variable_base_msm(
             &[scalar_1, beta, -v1 - gamma.mul(v4), gamma_2],
-            &[d_comm_1.clone().to_affine(), w3_comm_1_affine.clone(), g1_affine.clone(), p_d_comm_1_affine.clone()]
-        ).into();
-        let w3_rhs2 = variable_base_msm(
-            &[gamma],
-            &[g1_affine.clone()]
-        ).into();
+            &[
+                d_comm_1.clone().to_affine(),
+                w3_comm_1_affine,
+                g1_affine,
+                p_d_comm_1_affine,
+            ],
+        )
+        .into();
+        let w3_rhs2 = variable_base_msm(&[gamma], &[g1_affine]).into();
 
         let w3_lhs = pairing(&w3_comm_1_affine, &vp.s_g2());
         let w3_pairing_g1_terms = vec![w3_rhs1, w3_rhs2];
-        let w3_pairing_g2_terms = vec![g2_affine.clone(), z_i_comm_2_affine.clone()];
+        let w3_pairing_g2_terms = vec![g2_affine, z_i_comm_2_affine];
         let w3_rhs = multi_pairing(&w3_pairing_g1_terms, &w3_pairing_g2_terms);
         assert_eq!(w3_lhs, w3_rhs);
         println!("Finished to verify: w3");
@@ -256,13 +256,24 @@ impl Verifier<'_>
         // 5. verify w4 for X = ζ
         let p_e_comm_1_affine: G1Affine = variable_base_msm(
             &[v5.mul(beta), -v5 + v4 * v3.invert().unwrap(), -z_v_zeta],
-            &[g1_affine.clone(), v_comm_1.clone().to_affine(), q_e_comm_1.clone().to_affine()]
-        ).into();
+            &[
+                g1_affine,
+                v_comm_1.clone().to_affine(),
+                q_e_comm_1.clone().to_affine(),
+            ],
+        )
+        .into();
         let w4_comm_1_affine: G1Affine = w4_comm_1.to_affine();
         let w4_msm_rhs = variable_base_msm(
             &[scalar_1, zeta, gamma, -v5],
-            &[e_comm_1.clone().to_affine(), w4_comm_1_affine.clone(), p_e_comm_1_affine.clone(), g1_affine.clone()]
-        ).into();
+            &[
+                e_comm_1.clone().to_affine(),
+                w4_comm_1_affine,
+                p_e_comm_1_affine,
+                g1_affine,
+            ],
+        )
+        .into();
         let w4_pairing_lhs = pairing(&w4_comm_1_affine, &vp.s_g2());
         let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
         assert_eq!(w4_pairing_lhs, w4_pairing_rhs);

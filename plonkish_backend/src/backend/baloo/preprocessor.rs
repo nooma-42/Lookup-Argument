@@ -1,11 +1,10 @@
+use crate::pcs::univariate::{
+    UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam,
+};
+use crate::{pcs::PolynomialCommitmentScheme, Error};
+use halo2_curves::bn256::Bn256;
 use rand::rngs::OsRng;
 use std::cmp::max;
-use crate::{
-    pcs::PolynomialCommitmentScheme,
-    Error,
-};
-use halo2_curves::bn256::Bn256;
-use crate::pcs::univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam};
 
 type Pcs = UnivariateKzg<Bn256>;
 
@@ -17,8 +16,9 @@ pub fn preprocess(
         UnivariateKzgParam<Bn256>,
         UnivariateKzgProverParam<Bn256>,
         UnivariateKzgVerifierParam<Bn256>,
-    ), Error>
-{
+    ),
+    Error,
+> {
     let mut rng = OsRng;
     let poly_size = max(t.next_power_of_two() * 2, m.next_power_of_two() * 2);
     let param = Pcs::setup(poly_size, 1, &mut rng).unwrap();

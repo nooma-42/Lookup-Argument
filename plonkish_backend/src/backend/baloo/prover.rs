@@ -1,23 +1,21 @@
-use rand::rngs::OsRng;
-use num_integer::Roots;
-use std::{fmt::Debug, collections::HashSet, ops::Mul};
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G2Affine, G1, G2};
 use crate::{
-    poly::{Polynomial, univariate::UnivariatePolynomial},
-    backend::baloo::{
-      util::{lagrange_interp, multi_pairing, log_2, pow_2},
-      preprocessor::preprocess,
-    },
+    backend::baloo::util::{log_2, pow_2},
     pcs::{
-        PolynomialCommitmentScheme,
-        Additive,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam, UnivariateKzgCommitment},
+        univariate::{
+            UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgParam, UnivariateKzgProverParam,
+        }, PolynomialCommitmentScheme,
     },
+    poly::{univariate::UnivariatePolynomial, Polynomial},
     util::{
-        arithmetic::{Field, PrimeField, root_of_unity, barycentric_weights},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite},
-    }
+        arithmetic::{barycentric_weights, root_of_unity, Field},
+        transcript::{
+            FieldTranscript, FieldTranscriptWrite,
+            G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript,
+        },
+    },
 };
+use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine};
+use std::{collections::HashSet, ops::Mul};
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
@@ -29,21 +27,24 @@ pub struct Prover<'b> {
     d: usize,
 }
 
-impl Prover<'_>
-{
+impl Prover<'_> {
     pub fn new<'a>(
         table: &'a Vec<Fr>,
         param: &'a UnivariateKzgParam<Bn256>,
-        pp: &'a UnivariateKzgProverParam<Bn256>
+        pp: &'a UnivariateKzgProverParam<Bn256>,
     ) -> Prover<'a> {
         let d = (1 << pp.k()) - 2;
-        Prover { table, param, pp, d }
+        Prover {
+            table,
+            param,
+            pp,
+            d,
+        }
     }
 
     /// Compute polynomial multilication naively in O(n^2)
     fn naive_multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
-
-        let mut c =vec![Scalar::zero(); coeffs0.len() + coeffs1.len() - 1];
+        let mut c = vec![Scalar::zero(); coeffs0.len() + coeffs1.len() - 1];
 
         for i in 0..coeffs0.len() {
             for j in 0..coeffs1.len() {
@@ -60,7 +61,13 @@ impl Prover<'_>
         Self::naive_multiplication(coeffs0, coeffs1)
     }
 
-    fn eval_rec(tree: &Vec<Vec<Vec<Scalar>>>, k: usize, base: usize, f: &[Scalar], u:&[Scalar]) -> Vec<Scalar> {
+    fn eval_rec(
+        tree: &Vec<Vec<Vec<Scalar>>>,
+        k: usize,
+        base: usize,
+        f: &[Scalar],
+        u: &[Scalar],
+    ) -> Vec<Scalar> {
         let n = u.len();
         // println!("eval_rec> k={}, base={}, n={}", k, base, n);
         // println!("f={}", scalar_vector_to_string(&f.to_vec()));
@@ -71,21 +78,20 @@ impl Prover<'_>
         }
 
         // println!("division> k-1={}, left={}, right={}, n={}", k-1, base+0, base+1, n);
-        let (q0, r0) = Self::division(f, &tree[k-1][2*base + 0]);
-        let (q1, r1) = Self::division(f, &tree[k-1][2*base + 1]);
+        let (q0, r0) = Self::division(f, &tree[k - 1][2 * base]);
+        let (q1, r1) = Self::division(f, &tree[k - 1][2 * base + 1]);
 
-        let (u0, u1) = u.split_at(n/2);
+        let (u0, u1) = u.split_at(n / 2);
         // println!("u0={}", scalar_vector_to_string(&u0.to_vec()));
         // println!("u1={}", scalar_vector_to_string(&u1.to_vec()));
-        let mut rs0: Vec<Scalar> = Self::eval_rec(tree, k-1, base * 2 + 0, &r0, &u0);
-        let mut rs1: Vec<Scalar> = Self::eval_rec(tree, k-1, base * 2 + 1, &r1, &u1);
+        let mut rs0: Vec<Scalar> = Self::eval_rec(tree, k - 1, base * 2, &r0, u0);
+        let mut rs1: Vec<Scalar> = Self::eval_rec(tree, k - 1, base * 2 + 1, &r1, u1);
         rs0.append(&mut rs1);
         rs0
     }
 
     // TODO: https://en.wikipedia.org/wiki/Synthetic_division
     fn division(dividend: &[Scalar], divisor: &[Scalar]) -> (Vec<Scalar>, Vec<Scalar>) {
-
         // Important: if dividend.len() < divisor.len(), then the quotient is zero and
         // the remainder is the dividend.
         if dividend.len() < divisor.len() {
@@ -96,7 +102,8 @@ impl Prover<'_>
         let mut remainder = dividend.to_vec();
 
         for i in (0..quotient.len()).rev() {
-            quotient[i] = remainder[i + divisor.len() - 1] * divisor[divisor.len() - 1].invert().unwrap();
+            quotient[i] =
+                remainder[i + divisor.len() - 1] * divisor[divisor.len() - 1].invert().unwrap();
             for j in 0..divisor.len() {
                 remainder[i + j] -= quotient[i] * divisor[j];
             }
@@ -130,15 +137,15 @@ impl Prover<'_>
         for k in 0..log_2(n) {
             let mut new_level = Vec::new();
             for i in 0..(n >> (k + 1)) {
-                let left = &level[2*i];
-                let right = &level[2*i+1];
+                let left = &level[2 * i];
+                let right = &level[2 * i + 1];
                 let poly = Self::multiplication(left, right);
                 new_level.push(poly);
             }
             tree.push(new_level.clone());
             level = new_level;
         }
-        assert_eq!(tree.len(), log_2(n)+1);
+        assert_eq!(tree.len(), log_2(n) + 1);
 
         // for i in 0..tree.len() {
         //     println!("tree[{}]=", i);
@@ -193,18 +200,17 @@ impl Prover<'_>
         assert!(n.is_power_of_two());
         assert_eq!(n, pow_2(k));
 
+        let node0 = &tree[k - 1][2 * base];
+        let node1 = &tree[k - 1][2 * base + 1];
 
-        let node0 = &tree[k-1][2*base + 0];
-        let node1 = &tree[k-1][2*base + 1];
+        let (c0, c1) = c.split_at(n / 2);
+        let (u0, u1) = u.split_at(n / 2);
 
-        let (c0, c1) = c.split_at(n/2);
-        let (u0, u1) = u.split_at(n/2);
+        let r0 = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base, c0, u0);
+        let r1 = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base + 1, c1, u1);
 
-        let r0 = Self::linear_combination_linear_moduli_fix(&tree, k-1, 2*base + 0, c0, u0);
-        let r1 = Self::linear_combination_linear_moduli_fix(&tree, k-1, 2*base + 1, c1, u1);
-
-        let poly0 = UnivariatePolynomial::monomial(Self::multiplication(&node1, &r0));
-        let poly1 = UnivariatePolynomial::monomial(Self::multiplication(&node0, &r1));
+        let poly0 = UnivariatePolynomial::monomial(Self::multiplication(node1, &r0));
+        let poly1 = UnivariatePolynomial::monomial(Self::multiplication(node0, &r1));
         (&poly0 + &poly1).coeffs().to_vec()
     }
 
@@ -229,34 +235,38 @@ impl Prover<'_>
         // 1. building up subproduct tree
 
         let tree = Self::contruct_subproduct_tree(domain);
-        println!("tree={:?}", tree);
         // 2. construct a polynomial with linear moduli
 
-        let f_derivative = Self::linear_combination_linear_moduli_fix(&tree,
-            log_2(n), 0, &vec![Scalar::one(); n], domain);
-        // println!("f_derivative={}", scalar_vector_to_string(&f_derivative));
-        println!("f_derivative={:?}", f_derivative);
+        let f_derivative = Self::linear_combination_linear_moduli_fix(
+            &tree,
+            log_2(n),
+            0,
+            &vec![Scalar::one(); n],
+            domain,
+        );
 
-        let f_derivative_at_u =  Self::eval_rec(&tree, log_2(n), 0, &f_derivative, domain);
+        let f_derivative_at_u = Self::eval_rec(&tree, log_2(n), 0, &f_derivative, domain);
 
-        // println!("f_derivative_at_u={}", scalar_vector_to_string(&f_derivative_at_u));
-        println!("f_derivative_at_u={:?}", f_derivative_at_u);
+        let mut bary_centric_weights: Vec<Scalar> = f_derivative_at_u
+            .iter()
+            .map(|e| e.invert().unwrap())
+            .collect();
 
-        let mut bary_centric_weights: Vec<Scalar> = f_derivative_at_u.iter().map(|e| e.invert().unwrap()).collect();
-
-        let mut bary_centric_weights2: Vec<Scalar> = f_derivative_at_u.iter().map(|e| {
-            println!("e: {:?}", e);
-            e.invert().unwrap()
-        }).collect();
+        let bary_centric_weights2: Vec<Scalar> = f_derivative_at_u
+            .iter()
+            .map(|e| e.invert().unwrap())
+            .collect();
         assert_eq!(bary_centric_weights, bary_centric_weights2);
         // println!("bary_centric_weights={}", scalar_vector_to_string(&bary_centric_weights));
         // println!("bary_centric_weights2={}", scalar_vector_to_string(&UniPolynomial::barycentric_weights(domain)));
 
-        bary_centric_weights.iter_mut().enumerate().for_each(|(i, w)| *w = *w * evals[i]);
+        bary_centric_weights
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, w)| *w *= evals[i]);
 
         // println!("before linear_combination_linear_moduli_fix");
-        let f = Self::linear_combination_linear_moduli_fix(&tree, log_2(n), 0, &bary_centric_weights, domain);
-
+        
 
         // {
         //     let z_poly = UniPolynomial::from_coeffs(&tree[log_2(n)][0]);
@@ -269,15 +279,16 @@ impl Prover<'_>
         //     println!("g={}", scalar_vector_to_string(&g.coeffs));
         // }
 
-        f
-
+        Self::linear_combination_linear_moduli_fix(
+            &tree,
+            log_2(n),
+            0,
+            &bary_centric_weights,
+            domain,
+        )
     }
 
-    pub fn prove(
-        &self,
-        lookup: &Vec<Fr>,
-    ) -> Vec<u8>
-    {
+    pub fn prove(&self, lookup: &Vec<Fr>) -> Vec<u8> {
         let table = self.table.clone();
         let param = self.param.clone();
         let pp = self.pp.clone();
@@ -328,32 +339,34 @@ impl Prover<'_>
 
         // remove duplicated elements
         let t_values_from_lookup: HashSet<_> = lookup.clone().into_iter().collect();
-        print!("t_values_from_lookup: {:?}\n", t_values_from_lookup);
         // I: the index of t_values_from_lookup elements in sub table t_I
-        let i_values: Vec<_> = t_values_from_lookup.iter().map(|elem| table.iter().position(|&x| x == *elem).unwrap()).collect();
-        print!("i_values: {:?}\n", i_values);
+        let i_values: Vec<_> = t_values_from_lookup
+            .iter()
+            .map(|elem| table.iter().position(|&x| x == *elem).unwrap())
+            .collect();
         let log_m = log_2(m);
         let v_root_of_unity = root_of_unity::<Fr>(log_m);
         // cache all roots of unity
         let log_t = log_2(t);
         let t_root_of_unity = root_of_unity::<Fr>(log_t);
-        let t_roots_of_unity = (0..t).map(|i| t_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
-        let v_roots_of_unity = (0..m).map(|i| v_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
+        let t_roots_of_unity = (0..t)
+            .map(|i| t_root_of_unity.pow([i as u64]))
+            .collect::<Vec<Fr>>();
+        let v_roots_of_unity = (0..m)
+            .map(|i| v_root_of_unity.pow([i as u64]))
+            .collect::<Vec<Fr>>();
         // H_I = {ξ_i} , i = [1...k], ξ(Xi)
         let h_i: Vec<_> = i_values.iter().map(|&i| t_roots_of_unity[i]).collect();
-        print!("h_i: {:?}\n", h_i);
         // TODO: optimize interpolation polynomial with https://github.com/gy001/hypercube/blob/main/univarization/src/unipoly.rs#L391
         // refer to barycentric_weights in arithmetic.rs
-        let t_values_from_lookup_set : Vec<Fr>= t_values_from_lookup.clone().into_iter().collect();
-        print!("t_values_from_lookup_set: {:?}\n", t_values_from_lookup_set);
+        let t_values_from_lookup_set: Vec<Fr> = t_values_from_lookup.clone().into_iter().collect();
         // let t_i_poly = lagrange_interp(&h_i, &t_values_from_lookup_set);
-        let t_i_poly_coeffs = Self::compute_coeffs_from_evals_fast_2(&t_values_from_lookup_set, &h_i);
+        let t_i_poly_coeffs =
+            Self::compute_coeffs_from_evals_fast_2(&t_values_from_lookup_set, &h_i);
         let t_i_poly = UnivariatePolynomial::monomial(t_i_poly_coeffs);
         let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
         // sanity check
         for (i, &root) in h_i.iter().enumerate() {
-            println!("i: {:?}", i);
-            println!("root: {:?}", root);
             assert_eq!(z_i_poly.evaluate(&root), Fr::zero());
             assert_eq!(t_i_poly.evaluate(&root), t_values_from_lookup_set[i]);
             assert_eq!(t_i_poly.evaluate(&root), t_poly.evaluate(&root));
@@ -363,7 +376,10 @@ impl Prover<'_>
         let mut v_values = Vec::new();
         for i in 0..m {
             // find the index of 1 in jth row of M
-            let col_i = t_values_from_lookup.iter().position(|&x| x == lookup[i]).unwrap();
+            let col_i = t_values_from_lookup
+                .iter()
+                .position(|&x| x == lookup[i])
+                .unwrap();
             col_values.push(col_i);
             let col_i_root = h_i[col_i];
             // Note: v = 1 / col_i_root in paper
@@ -375,18 +391,22 @@ impl Prover<'_>
         let v_poly = UnivariatePolynomial::lagrange(v_values.clone()).ifft();
 
         // [ξ(x)]1
-        let v_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
+        let v_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
         // [z_I(x)]2
-        let z_i_comm_2: UnivariateKzgCommitment<G2Affine> = Pcs::commit_monomial_g2(&param, &z_i_poly.coeffs());
-        transcript.write_commitment_g2(&z_i_comm_2.clone().to_affine()).unwrap();
+        let z_i_comm_2: UnivariateKzgCommitment<G2Affine> =
+            Pcs::commit_monomial_g2(&param, z_i_poly.coeffs());
+        transcript
+            .write_commitment_g2(&z_i_comm_2.clone().to_affine())
+            .unwrap();
         // [t(x)]1
-        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
 
         let alpha = transcript.squeeze_challenge();
 
         // π1 = ([ξ(x)]1, [z_I(x)]2, [t(x)]1)
         let pi_1 = (v_comm_1.clone(), z_i_comm_2.clone(), t_i_comm_1.clone());
-
 
         /************
           Round 2
@@ -459,10 +479,12 @@ impl Prover<'_>
             let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
             // Lagrange polynomial on V: μ_i(X)
             // z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
-            let mu_poly = &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            let mu_poly =
+                &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
             // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
             // z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
-            let normalized_lag_poly = &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let normalized_lag_poly =
+                &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
             // μ_i(α)
             let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
             // D(X) = Σ_i(μ_i(α) * normalized_lag_poly)
@@ -479,9 +501,12 @@ impl Prover<'_>
         assert_eq!(r_poly.evaluate(&scalar_0), scalar_0);
 
         // π2 = ([D]1 = [D(x)]1, [R]1 = [R(x)]1, [Q2]1 = [Q_D(x)]1)
-        let d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
-        let r_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
-        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
+        let d_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
+        let r_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
+        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
 
         let beta = transcript.squeeze_challenge();
 
@@ -500,10 +525,12 @@ impl Prover<'_>
             let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
             // Lagrange polynomial on V: μ_i(X)
             // z_v_poly / v_root_poly * v_root / Fr::from(m as u64);
-            let mu_poly = &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            let mu_poly =
+                &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
             // Normalized Lagrange Polynomial: τ_col(i)(X) / τ_col(i)(0)
             // z_i_poly / x_root_poly * (-col_i_root) / z_i_at_0;
-            let normalized_lag_poly = &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let normalized_lag_poly =
+                &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
             // Normalized Lagrange Polynomial at β: τ_col(i)(β) / τ_col(i)(0)
             let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
             // E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
@@ -526,11 +553,12 @@ impl Prover<'_>
             // e_poly * (beta - v_poly) + v_poly * z_i_at_beta / z_i_at_0
             &(bbb + ddd) / &z_v_poly
         };
-        print!("q_e_poly: {:?}\n", q_e_poly);
 
         // π3 = ([E]1 = [E(x)]1, [Q1]1 = [Q_E(x)]1)
-        let e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
-        let q_e_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
+        let e_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
+        let q_e_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
 
         let gamma: Fr = transcript.squeeze_challenge();
         let zeta: Fr = transcript.squeeze_challenge();
@@ -571,34 +599,42 @@ impl Prover<'_>
         // P_D(X) = D(β) * t_I(X) - φ(α) - R(X) - z_I(β) * Q_D(X)
         let p_d_poly = &(&t_i_poly * d_beta + v2.neg()) - (&r_poly + &q_d_poly * v4);
         // P_E(X) = E(ζ) * (β - v(X)) + v(X) * z_I(β) / z_I(0) - z_V(ζ) * Q_E(X)
-        let p_e_poly = &(&(&beta_sub_v_poly * v5) + &v_poly * (v4.mul(v3.invert().unwrap()))) - &q_e_poly * z_v_zeta;
+        let p_e_poly = &(&(&beta_sub_v_poly * v5) + &v_poly * (v4.mul(v3.invert().unwrap())))
+            - &q_e_poly * z_v_zeta;
         // X^(d-m+1)
-        let coeffs = vec![scalar_0; d - m + 1].into_iter().chain(vec![scalar_1]).collect();
+        let coeffs = vec![scalar_0; d - m + 1]
+            .into_iter()
+            .chain(vec![scalar_1])
+            .collect();
         let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
         // calculate [w1]1, [w2]1, [w2]1, [w4]1
         // X - α
         let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
         // calculate w1 = X^(d-m+1) * (E(X) - E(α) + (φ(X) - φ(α))γ) / X - α
-        let mut w1 = &(&(e_poly.clone() + v1.neg()) + &(phi_poly.clone() + v2.neg()) * gamma) / &x_alpha_poly;
+        let mut w1 = &(&(e_poly.clone() + v1.neg()) + &(phi_poly.clone() + v2.neg()) * gamma)
+            / &x_alpha_poly;
         w1 = w1.poly_mul(x_exponent_poly.clone());
         // calculate polynomial X
         let x_poly = UnivariatePolynomial::monomial(vec![scalar_0, scalar_1]);
         // X^m
-        let x_m_exponent_poly = UnivariatePolynomial::monomial(vec![scalar_0; m].into_iter().chain(vec![scalar_1]).collect());
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(
+            vec![scalar_0; m]
+                .into_iter()
+                .chain(vec![scalar_1])
+                .collect(),
+        );
         // calculate w2 = (z_I(X) - v3 / X + γ * R(X) / X +  γ^2 * X^(d-m+1) * (z_I(X) - X^m)) + γ^3 * X^(d-m+1) * R(X)
-        let w2 = &(
-                &(&(z_i_poly.clone() + v3.neg()) / &x_poly)
-                + &(&(&r_poly * gamma) / &x_poly)
-            ) + &x_exponent_poly.poly_mul(
-                &(&(&z_i_poly - x_m_exponent_poly.clone()) * gamma_2)
-                + &r_poly * gamma_3
+        let w2 = &(&(&(z_i_poly.clone() + v3.neg()) / &x_poly) + &(&(&r_poly * gamma) / &x_poly))
+            + &x_exponent_poly.poly_mul(
+                &(&(&z_i_poly - x_m_exponent_poly.clone()) * gamma_2) + &r_poly * gamma_3,
             );
-        print!("w2: {:?}\n", w2.degree());
         // calculate X - β
         let x_beta_poly = UnivariatePolynomial::monomial(vec![-beta, scalar_1]);
         // calculate w3 = (D(X) - E(α) + (z_I(X) - z_I(β))γ + P_D(X)γ^2) / X - β
         // v1 = E(α) == D(β)
-        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly.clone() + v4.neg()) * gamma) + &p_d_poly * gamma_2) / &x_beta_poly;
+        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly.clone() + v4.neg()) * gamma)
+            + &p_d_poly * gamma_2)
+            / &x_beta_poly;
         // calculate X - ζ
         let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
         // calculate w4 = (E(X) - E(ζ) + P_E(X)γ) / X - ζ
@@ -607,7 +643,11 @@ impl Prover<'_>
 
         // caulk+ calculate w5, w6
         // z_h_poly = X^t - 1, [-1, 0, ..., 0, 1], t-1 0s in between
-        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
+        let z_h_poly_coeffs = vec![scalar_1.neg()]
+            .into_iter()
+            .chain(vec![scalar_0; t - 1])
+            .chain(vec![scalar_1])
+            .collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
 
         // calculate barycentric_weights
@@ -616,13 +656,36 @@ impl Prover<'_>
         // w5_poly = (t_poly - t_I_poly) / z_I_poly
         let w5_poly_direct = &(&t_poly - &t_i_poly) / &z_i_poly;
         // q_t_poly_i = (t_poly - table[i])/X-root_of_unity^i
-        let q_t_polys: Vec<_> = table.clone().into_iter().enumerate().map(|(i, point)| &(t_poly.clone() + point.neg()) / &(x_poly.clone() + t_root_of_unity.pow([i as u64]).neg())).collect();
+        let q_t_polys: Vec<_> = table
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, point)| {
+                &(t_poly.clone() + point.neg())
+                    / &(x_poly.clone() + t_root_of_unity.pow([i as u64]).neg())
+            })
+            .collect();
         // optimize w5_poly = bc_weights[0] * q_t_polys[i_values[0]] + bc_weights[1] * q_t_polys[i_values[1]] + ... + bc_weights[h_i.len()-1] * q_t_polys[i_values[h_i.len()-1]]
-        let w5_poly = bc_weights.clone().into_iter().enumerate().map(|(i, weight)| &q_t_polys[i_values[i]] * weight).reduce(|acc, poly| &acc + poly).unwrap();
+        let w5_poly = bc_weights
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, weight)| &q_t_polys[i_values[i]] * weight)
+            .reduce(|acc, poly| &acc + poly)
+            .unwrap();
         assert_eq!(w5_poly, w5_poly_direct);
         // w6_poly = z_H_poly * (bc_weights[0] * 1/X-h_i[0] + bc_weights[1] * 1/X-h_i[1] + ... + bc_weights[h_i.len()-1] * 1/X-h_i[h_i.len()-1])
-        let denom_polys: Vec<_> = h_i.into_iter().map(|root| UnivariatePolynomial::monomial(vec![root.neg(), scalar_1])).collect();
-        let w6_poly = bc_weights.clone().into_iter().enumerate().map(|(i, weight)| &(&z_h_poly / &denom_polys[i]) * weight).reduce(|acc, poly| &acc + poly).unwrap();
+        let denom_polys: Vec<_> = h_i
+            .into_iter()
+            .map(|root| UnivariatePolynomial::monomial(vec![root.neg(), scalar_1]))
+            .collect();
+        let w6_poly = bc_weights
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, weight)| &(&z_h_poly / &denom_polys[i]) * weight)
+            .reduce(|acc, poly| &acc + poly)
+            .unwrap();
         // w6_poly = z_H_poly / z_I_poly
         let w6_poly_direct = &z_h_poly / &z_i_poly;
         assert_eq!(w6_poly, w6_poly_direct);
@@ -638,15 +701,31 @@ impl Prover<'_>
         transcript.write_field_element(&v5).unwrap();
 
         // [a]1
-        let a_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &a_poly, &mut transcript).unwrap();
+        let a_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &a_poly, &mut transcript).unwrap();
         // calculate [w1]1, [w2]1, [w2]1, [w4]1 and write to transcript
-        let w1_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
-        let w2_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
-        let w3_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
-        let w4_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
+        let w1_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
+        let w2_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
+        let w3_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
+        let w4_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
 
         // π4 = (v1, v2, v3, v4, v5, [a]1, [w1]1, [w2]1, [w3]1, [w4]1)
-        let pi_4 = (v1, v2, v3, v4, v5, a_comm_1.clone(), w1_comm_1.clone(), w2_comm_1.clone(), w3_comm_1.clone(), w4_comm_1.clone());
+        let pi_4 = (
+            v1,
+            v2,
+            v3,
+            v4,
+            v5,
+            a_comm_1.clone(),
+            w1_comm_1.clone(),
+            w2_comm_1.clone(),
+            w3_comm_1.clone(),
+            w4_comm_1.clone(),
+        );
 
         // generate proof from transcript
         transcript.into_proof()
@@ -656,13 +735,24 @@ impl Prover<'_>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::transcript::{
+        FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite,
+    };
     use halo2_curves::bn256::Fr;
-    use crate::util::transcript::{FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite};
     type Pcs = UnivariateKzg<Bn256>;
 
     #[test]
     fn test_baloo() {
-        let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)];
+        let table = vec![
+            Fr::from(1),
+            Fr::from(2),
+            Fr::from(3),
+            Fr::from(4),
+            Fr::from(5),
+            Fr::from(6),
+            Fr::from(7),
+            Fr::from(8),
+        ];
         let lookup = vec![Fr::from(4), Fr::from(3), Fr::from(5), Fr::from(2)];
         let m = lookup.len();
         let t = table.len();
@@ -675,7 +765,6 @@ mod tests {
 
     #[test]
     fn test_verify() {
-
         let lookup = vec![Fr::one(), Fr::one()];
         let table = vec![Fr::one(), Fr::one()];
         let m = lookup.len();
@@ -693,10 +782,14 @@ mod tests {
         // Commit and open
         let proof = {
             let mut transcript = Keccak256Transcript::new(());
-            let poly = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::monomial(lookup.clone());
+            let poly =
+                <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::monomial(lookup.clone());
             print!("coeffs: {:?}\n", poly.coeffs());
             let comm = Pcs::commit_and_write(&pp, &poly, &mut transcript).unwrap();
-            let point = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(m, &mut transcript);
+            let point = <Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(
+                m,
+                &mut transcript,
+            );
             let eval = poly.evaluate(&point);
 
             // Use the correct method to write the field element
@@ -712,15 +805,16 @@ mod tests {
             Pcs::verify(
                 &vp,
                 &Pcs::read_commitment(&vp, &mut transcript).unwrap(),
-                &<Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(m, &mut transcript),
-
+                &<Pcs as PolynomialCommitmentScheme<Fr>>::Polynomial::squeeze_point(
+                    m,
+                    &mut transcript,
+                ),
                 // Use the correct method to read the field element
                 &transcript.read_field_element().unwrap(),
                 &mut transcript,
             )
         };
         assert_eq!(result, Ok(()));
-
     }
 
     #[test]
@@ -747,7 +841,9 @@ mod tests {
         let comm = <Pcs as PolynomialCommitmentScheme<Fr>>::commit(&pp, &poly).unwrap();
         println!("comm: {:?}", comm);
         println!("comm affine: {:?}", comm.clone().to_affine());
-        transcript.write_commitment(&comm.clone().to_affine()).unwrap();
+        transcript
+            .write_commitment(&comm.clone().to_affine())
+            .unwrap();
         let comm_1 = Pcs::commit_monomial(&pp, &poly.coeffs());
         println!("comm_1: {:?}", comm_1);
         assert_eq!(comm_1, comm);

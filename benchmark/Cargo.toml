@@ -22,6 +22,7 @@ ark-ff = { version = "0.4.0", default-features = false }
 ark-bn254 = { version = "0.4.0", default-features = false, features = ["curve"] }
 espresso_subroutines = { git = "https://github.com/EspressoSystems/hyperplonk", rev = "56b1085", package = "subroutines", default-features = false, features = ["parallel"] }
 espresso_hyperplonk = { git = "https://github.com/EspressoSystems/hyperplonk", rev = "56b1085", package = "hyperplonk", default-features = false, features = ["parallel"] }
+regex = "1.11.1"
 
 [features]
 default = []

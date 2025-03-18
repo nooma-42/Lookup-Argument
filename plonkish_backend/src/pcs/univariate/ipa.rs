@@ -202,7 +202,7 @@ where
             Monomial => pp.monomial(),
             Lagrange => pp.lagrange(),
         };
-        Ok(variable_base_msm(coeffs, &bases[..coeffs.len()]).into()).map(UnivariateIpaCommitment)
+        Ok(UnivariateIpaCommitment(variable_base_msm(coeffs, &bases[..coeffs.len()]).into()))
     }
 
     fn batch_commit<'a>(

@@ -1,16 +1,15 @@
-use rand::rngs::OsRng;
-use std::ops::Mul;
-use halo2_curves::{bn256::{multi_miller_loop, pairing, Bn256, Fr, G1Affine, G2Affine, G2Prepared, Gt, G1, G2}, pairing::MillerLoopResult};
+use halo2_curves::{
+    bn256::{multi_miller_loop, Fr, G1Affine, G2Affine, G2Prepared, Gt},
+    pairing::MillerLoopResult,
+};
 
 use crate::{
     poly::univariate::UnivariatePolynomial,
-    pcs::{univariate::UnivariateKzg, PolynomialCommitmentScheme},
     util::{
         arithmetic::Field,
-        transcript::{InMemoryTranscript, Keccak256Transcript},
-    }
+        transcript::InMemoryTranscript,
+    },
 };
-
 
 pub fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> UnivariatePolynomial<Fr> {
     assert!(h_i_values.len() == t_values_from_lookup.len());
@@ -23,7 +22,7 @@ pub fn lagrange_interp(h_i_values: &[Fr], t_values_from_lookup: &[Fr]) -> Univar
             if h_i == h_j {
                 continue;
             }
-            bary_centric_weights[idx] = bary_centric_weights[idx] * (h_i - h_j).invert().unwrap();
+            bary_centric_weights[idx] *= (h_i - h_j).invert().unwrap();
         }
         let y_i = t_values_from_lookup[idx];
         // x - x_i
@@ -49,18 +48,17 @@ pub fn log_2(n: usize) -> usize {
     assert_ne!(n, 0);
 
     if n.is_power_of_two() {
-      (1usize.leading_zeros() - n.leading_zeros()) as usize
+        (1usize.leading_zeros() - n.leading_zeros()) as usize
     } else {
-      (0usize.leading_zeros() - n.leading_zeros()) as usize
+        (0usize.leading_zeros() - n.leading_zeros()) as usize
     }
 }
 
 pub fn pow_2(n: usize) -> usize {
     // assert_ne!(n, 0);
-    let p = (2 as u32).pow(n as u32);
+    let p = 2_u32.pow(n as u32);
     p as usize
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -79,7 +77,6 @@ mod tests {
         assert_eq!(poly.evaluate(&Fr::from(5)), Fr::from(25));
     }
 
-
     #[test]
     fn test_multi_pairing_only_g2() {
         let mut rng = OsRng;
@@ -94,7 +91,12 @@ mod tests {
         let mut transcript = Keccak256Transcript::new(());
         let alpha = Fr::from(2 as u64);
         let scalar_1 = Fr::from(1 as u64);
-        let test_poly = UnivariatePolynomial::monomial(vec![Fr::from(1 as u64), Fr::from(2 as u64), Fr::from(3 as u64), Fr::from(4 as u64)]);
+        let test_poly = UnivariatePolynomial::monomial(vec![
+            Fr::from(1 as u64),
+            Fr::from(2 as u64),
+            Fr::from(3 as u64),
+            Fr::from(4 as u64),
+        ]);
         let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
         let test_comm_1 = Pcs::commit_and_write(&pp, &test_poly, &mut transcript).unwrap();
         print!("test_poly_comm_1: {:?}\n", test_comm_1);
@@ -106,10 +108,17 @@ mod tests {
         print!("quotient_comm_1: {:?}\n", quotient_comm_1);
         let quotient_comm_1_affine: G1Affine = quotient_comm_1.to_affine();
         let lhs = pairing(&quotient_comm_1_affine, &vp.s_g2());
-        let rhs_affine = test_comm_1_affine.add(&quotient_comm_1_affine.mul(alpha)).add(g1_affine.mul(test_at_alpha.neg())).into();
+        let rhs_affine = test_comm_1_affine
+            .add(&quotient_comm_1_affine.mul(alpha))
+            .add(g1_affine.mul(test_at_alpha.neg()))
+            .into();
         let rhs = pairing(&rhs_affine, &g2_affine);
         assert_eq!(lhs, rhs);
-        let rhs_terms_g1 = vec![test_comm_1_affine, quotient_comm_1_affine.mul(alpha).into(), g1_affine.mul(test_at_alpha.neg()).into()];
+        let rhs_terms_g1 = vec![
+            test_comm_1_affine,
+            quotient_comm_1_affine.mul(alpha).into(),
+            g1_affine.mul(test_at_alpha.neg()).into(),
+        ];
         let rhs_terms_g2 = vec![g2_affine, g2_affine, g2_affine];
         let rhs = multi_pairing(&rhs_terms_g1, &rhs_terms_g2);
         assert_eq!(lhs, rhs);
@@ -130,7 +139,12 @@ mod tests {
         let alpha = Fr::from(2 as u64);
         let scalar_0 = Fr::from(0 as u64);
         let scalar_1 = Fr::from(1 as u64);
-        let test_poly = UnivariatePolynomial::monomial(vec![Fr::from(1 as u64), Fr::from(2 as u64), Fr::from(3 as u64), Fr::from(4 as u64)]);
+        let test_poly = UnivariatePolynomial::monomial(vec![
+            Fr::from(1 as u64),
+            Fr::from(2 as u64),
+            Fr::from(3 as u64),
+            Fr::from(4 as u64),
+        ]);
         let x_poly = UnivariatePolynomial::monomial(vec![scalar_0, scalar_1]);
         let test_x_poly = test_poly.poly_mul(x_poly.clone());
         let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
@@ -143,15 +157,23 @@ mod tests {
         let test_x_at_alpha = test_x_poly.evaluate(&alpha);
         let x_quotient_poly = &(test_x_poly + test_x_at_alpha.neg()) / &x_alpha_poly;
 
-        let x_quotient_comm_1 = Pcs::commit_and_write(&pp, &x_quotient_poly, &mut transcript).unwrap();
+        let x_quotient_comm_1 =
+            Pcs::commit_and_write(&pp, &x_quotient_poly, &mut transcript).unwrap();
         let x_quotient_comm_1_affine: G1Affine = x_quotient_comm_1.to_affine();
 
         let lhs = pairing(&x_quotient_comm_1_affine, &vp.s_g2());
-        let rhs_affine = test_x_comm_1_affine.add(&x_quotient_comm_1_affine.mul(alpha)).add(g1_affine.mul(test_x_at_alpha.neg())).into();
+        let rhs_affine = test_x_comm_1_affine
+            .add(&x_quotient_comm_1_affine.mul(alpha))
+            .add(g1_affine.mul(test_x_at_alpha.neg()))
+            .into();
         let rhs = pairing(&rhs_affine, &g2_affine);
         assert_eq!(lhs, rhs);
 
-        let rhs_terms_g1 = vec![test_comm_1_affine, x_quotient_comm_1_affine.mul(alpha).into(), g1_affine.mul(test_x_at_alpha.neg()).into()];
+        let rhs_terms_g1 = vec![
+            test_comm_1_affine,
+            x_quotient_comm_1_affine.mul(alpha).into(),
+            g1_affine.mul(test_x_at_alpha.neg()).into(),
+        ];
         let rhs_terms_g2 = vec![vp.s_g2(), g2_affine, g2_affine];
         let rhs = multi_pairing(&rhs_terms_g1, &rhs_terms_g2);
         assert_eq!(lhs, rhs);

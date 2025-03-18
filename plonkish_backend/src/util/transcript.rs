@@ -6,12 +6,12 @@ use crate::{
     },
     Error,
 };
+use halo2_curves::bn256::G2Affine;
 use halo2_curves::{bn256, grumpkin, pasta};
 use std::{
     fmt::Debug,
     io::{self, Cursor},
 };
-use halo2_curves::bn256::G2Affine;
 
 pub trait FieldTranscript<F> {
     fn squeeze_challenge(&mut self) -> F;
@@ -109,7 +109,10 @@ pub trait G2TranscriptRead<C, F>: FieldTranscriptRead<F> {
 pub trait G2TranscriptWrite<C, F>: FieldTranscriptWrite<F> {
     fn write_commitment_g2(&mut self, comm: &C) -> Result<(), Error>;
 
-    fn write_commitments_g2<'a>(&mut self, comms: impl IntoIterator<Item = &'a C>) -> Result<(), Error>
+    fn write_commitments_g2<'a>(
+        &mut self,
+        comms: impl IntoIterator<Item = &'a C>,
+    ) -> Result<(), Error>
     where
         C: 'a,
     {
@@ -199,15 +202,16 @@ impl<H: Hash, F: PrimeField, W: io::Write> FieldTranscriptWrite<F> for FiatShami
     }
 }
 
-impl<H: Hash, S> G2Transcript<G2Affine, <G2Affine as CurveAffine>::ScalarExt> for FiatShamirTranscript<H, S> {
+impl<H: Hash, S> G2Transcript<G2Affine, <G2Affine as CurveAffine>::ScalarExt>
+    for FiatShamirTranscript<H, S>
+{
     fn common_commitment_g2(&mut self, comm: &G2Affine) -> Result<(), Error> {
-        let coordinates =
-            Option::<Coordinates<_>>::from(comm.coordinates()).ok_or_else(|| {
-                Error::Transcript(
-                    io::ErrorKind::Other,
-                    "Invalid elliptic curve point encoding".to_string(),
-                )
-            })?;
+        let coordinates = Option::<Coordinates<_>>::from(comm.coordinates()).ok_or_else(|| {
+            Error::Transcript(
+                io::ErrorKind::Other,
+                "Invalid elliptic curve point encoding".to_string(),
+            )
+        })?;
         self.state.update_field_element(coordinates.x());
         self.state.update_field_element(coordinates.y());
         Ok(())
@@ -225,8 +229,7 @@ impl<H: Hash, R: io::Read> G2TranscriptRead<G2Affine, <G2Affine as CurveAffine>:
                 .map_err(|err| Error::Transcript(err.kind(), err.to_string()))?;
             repr.as_mut().reverse();
         }
-        let [x, y] =
-            reprs.map(<<G2Affine as CurveAffine>::Base as PrimeField>::from_repr_vartime);
+        let [x, y] = reprs.map(<<G2Affine as CurveAffine>::Base as PrimeField>::from_repr_vartime);
         let ec_point = x
             .zip(y)
             .and_then(|(x, y)| CurveAffine::from_xy(x, y).into())

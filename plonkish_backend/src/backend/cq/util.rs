@@ -1,5 +1,5 @@
-use halo2_curves::bn256::{Fr, G1Affine, Fq};
-use crate::util::arithmetic::{Field, root_of_unity};
+use crate::util::arithmetic::{root_of_unity, Field};
+use halo2_curves::bn256::{Fq, Fr, G1Affine};
 use std::time::Instant;
 
 type Scalar = Fr;
@@ -12,9 +12,9 @@ pub fn log_2(n: usize) -> usize {
     assert_ne!(n, 0);
 
     if n.is_power_of_two() {
-      (1usize.leading_zeros() - n.leading_zeros()) as usize
+        (1usize.leading_zeros() - n.leading_zeros()) as usize
     } else {
-      (0usize.leading_zeros() - n.leading_zeros()) as usize
+        (0usize.leading_zeros() - n.leading_zeros()) as usize
     }
 }
 
@@ -23,8 +23,22 @@ fn fft_general(values: &mut Vec<Scalar>, inv: bool) -> Vec<Scalar> {
         if vals.len() == 1 {
             return vals.to_vec();
         }
-        let L = _fft(&vals.iter().step_by(2).cloned().collect::<Vec<_>>(), &roots_of_unity.iter().step_by(2).cloned().collect::<Vec<_>>());
-        let R = _fft(&vals.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(),  &roots_of_unity.iter().step_by(2).cloned().collect::<Vec<_>>());
+        let L = _fft(
+            &vals.iter().step_by(2).cloned().collect::<Vec<_>>(),
+            &roots_of_unity
+                .iter()
+                .step_by(2)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let R = _fft(
+            &vals.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(),
+            &roots_of_unity
+                .iter()
+                .step_by(2)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         let mut o = vec![Fr::from(0); vals.len()];
         for (i, (x, y)) in L.iter().zip(R.iter()).enumerate() {
             let start = Instant::now();
@@ -37,20 +51,32 @@ fn fft_general(values: &mut Vec<Scalar>, inv: bool) -> Vec<Scalar> {
         o
     }
 
-    assert!(values.len().is_power_of_two(), "fft: values length should be powers of 2");
-    
+    assert!(
+        values.len().is_power_of_two(),
+        "fft: values length should be powers of 2"
+    );
+
     // let roots = Scalar::roots_of_unity(values.len());
     let log_values = log_2(values.len());
     let value_root_of_unity = root_of_unity::<Fr>(log_values);
-    let roots = (0..values.len()).map(|i| value_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
+    let roots = (0..values.len())
+        .map(|i| value_root_of_unity.pow([i as u64]))
+        .collect::<Vec<Fr>>();
 
     // let o = Scalar::FIELD_MODULUS;
     let nvals: Vec<Fr> = values.clone();
     if inv {
         // Inverse FFT
         let invlen = Fr::from(values.len() as u64).invert().unwrap();
-        let reversed_roots = [roots[0]].iter().cloned().chain(roots.iter().skip(1).rev().cloned()).collect::<Vec<_>>();
-        _fft(&nvals, &reversed_roots).iter().map(|x| *x * invlen).collect()
+        let reversed_roots = [roots[0]]
+            .iter()
+            .cloned()
+            .chain(roots.iter().skip(1).rev().cloned())
+            .collect::<Vec<_>>();
+        _fft(&nvals, &reversed_roots)
+            .iter()
+            .map(|x| *x * invlen)
+            .collect()
     } else {
         // Regular FFT
         _fft(&nvals, &roots)
@@ -70,9 +96,29 @@ fn ec_fft_general(values: &mut Vec<G1Affine>, inv: bool) -> Vec<G1Affine> {
         if vals.len() == 1 {
             return vals.to_vec();
         }
-        let L = _fft(&vals.iter().step_by(2).cloned().collect::<Vec<_>>(), &roots_of_unity.iter().step_by(2).cloned().collect::<Vec<_>>());
-        let R = _fft(&vals.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(), &roots_of_unity.iter().step_by(2).cloned().collect::<Vec<_>>());
-        let mut o = vec![G1Affine { x: Fq::zero(), y: Fq::zero()}; vals.len()];
+        let L = _fft(
+            &vals.iter().step_by(2).cloned().collect::<Vec<_>>(),
+            &roots_of_unity
+                .iter()
+                .step_by(2)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let R = _fft(
+            &vals.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(),
+            &roots_of_unity
+                .iter()
+                .step_by(2)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let mut o = vec![
+            G1Affine {
+                x: Fq::zero(),
+                y: Fq::zero()
+            };
+            vals.len()
+        ];
 
         for (i, (x, y)) in L.iter().zip(R.iter()).enumerate() {
             let y_times_root = y * roots_of_unity[i];
@@ -82,18 +128,30 @@ fn ec_fft_general(values: &mut Vec<G1Affine>, inv: bool) -> Vec<G1Affine> {
         o
     }
 
-    assert!(is_power_of_two(values.len()), "ec_fft: values length should be powers of 2");
-    
+    assert!(
+        is_power_of_two(values.len()),
+        "ec_fft: values length should be powers of 2"
+    );
+
     let log_values: usize = log_2(values.len());
     let value_root_of_unity = root_of_unity::<Fr>(log_values);
-    let roots = (0..values.len()).map(|i| value_root_of_unity.pow([i as u64])).collect::<Vec<Fr>>();
+    let roots = (0..values.len())
+        .map(|i| value_root_of_unity.pow([i as u64]))
+        .collect::<Vec<Fr>>();
 
-    let nvals: Vec<G1Affine> = values.iter().cloned().collect();
+    let nvals: Vec<G1Affine> = values.to_vec();
     if inv {
         // Inverse FFT
         let invlen = Fr::from(values.len() as u64).invert().unwrap();
-        let reversed_roots = [roots[0]].iter().cloned().chain(roots.iter().skip(1).rev().cloned()).collect::<Vec<_>>();
-        _fft(&nvals, &reversed_roots).iter().map(|x| (x * invlen).into()).collect()
+        let reversed_roots = [roots[0]]
+            .iter()
+            .cloned()
+            .chain(roots.iter().skip(1).rev().cloned())
+            .collect::<Vec<_>>();
+        _fft(&nvals, &reversed_roots)
+            .iter()
+            .map(|x| (x * invlen).into())
+            .collect()
     } else {
         // Regular FFT
         _fft(&nvals, &roots)
@@ -124,7 +182,10 @@ mod tests {
         let start = Instant::now();
         let mut orig_fft = fft(&mut values);
         let duration = start.elapsed();
-        println!("\n ------------fft: {}ms----------- \n",duration.as_millis());
+        println!(
+            "\n ------------fft: {}ms----------- \n",
+            duration.as_millis()
+        );
         // println!("FFT result: {:?}", orig_fft);
 
         let orig_from_ifft = ifft(&mut orig_fft);
@@ -135,7 +196,7 @@ mod tests {
     fn test_ec_fft() {
         let lookup = vec![Fr::from(1), Fr::from(2), Fr::from(2), Fr::from(3)];
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
-    
+
         let m = lookup.len();
         let t = table.len();
 
@@ -148,5 +209,3 @@ mod tests {
         println!("EC IFFT result: {:?}", orig_from_ec_ifft);
     }
 }
-
-

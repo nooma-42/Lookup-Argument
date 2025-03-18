@@ -1,18 +1,21 @@
-use std::{collections::HashMap, collections::hash_map::Entry};
-use halo2_curves::bn256::{Bn256, Fr, G1Affine, Fq, G1};
 use crate::{
-    poly::univariate::UnivariatePolynomial,
-    backend::cq::util::log_2,
     pcs::{
+        univariate::{
+            UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgParam, UnivariateKzgProverParam,
+        },
         PolynomialCommitmentScheme,
-        univariate::{UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgCommitment},
     },
+    poly::univariate::UnivariatePolynomial,
     util::{
-        arithmetic::{Field, root_of_unity},
-        transcript::{InMemoryTranscript, TranscriptWrite, Keccak256Transcript, FieldTranscript, FieldTranscriptWrite},
-    }
+        arithmetic::Field,
+        transcript::{
+            FieldTranscript, FieldTranscriptWrite, InMemoryTranscript, Keccak256Transcript,
+            TranscriptWrite,
+        },
+    },
 };
-use std::time::Instant;
+use halo2_curves::bn256::{Bn256, Fq, Fr, G1Affine, G1};
+use std::{collections::hash_map::Entry, collections::HashMap};
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;
@@ -28,18 +31,18 @@ impl Prover<'_> {
     pub fn new<'a>(
         table: &'a Vec<Fr>,
         param: &'a UnivariateKzgParam<Bn256>,
-        pp: &'a UnivariateKzgProverParam<Bn256>
+        pp: &'a UnivariateKzgProverParam<Bn256>,
     ) -> Prover<'a> {
         let d = (1 << pp.k()) - 2;
-        Prover { table, param, pp, d }
+        Prover {
+            table,
+            param,
+            pp,
+            d,
+        }
     }
 
-    pub fn prove(
-        &self,
-        lookup: &Vec<Fr>,
-        q_t_comm: &Vec<G1>,
-    ) -> Vec<u8>
-    {
+    pub fn prove(&self, lookup: &Vec<Fr>, q_t_comm: &Vec<G1>) -> Vec<u8> {
         let table = self.table.clone();
         let param = self.param.clone();
         let pp = self.pp.clone();
@@ -57,7 +60,7 @@ impl Prover<'_> {
         lookup = [1, 2, 1, 3]
         m = [2, 1, 1, 0]
         */
-        
+
         // initialize transcript
         let mut transcript = Keccak256Transcript::new(());
         // compute m
@@ -65,29 +68,33 @@ impl Prover<'_> {
         for &value in lookup {
             match duplicates.entry(value) {
                 Entry::Occupied(mut entry) => *entry.get_mut() += Fr::from(1),
-                Entry::Vacant(entry) => { entry.insert(Fr::from(1)); },
+                Entry::Vacant(entry) => {
+                    entry.insert(Fr::from(1));
+                }
             }
         }
 
         // get m_values
-        let m_values: Vec<Fr> = table.iter()
+        let m_values: Vec<Fr> = table
+            .iter()
             .map(|&val| *duplicates.get(&val).unwrap_or(&Fr::from(0)))
             .collect();
         // println!("m_values: {:?}", m_values);
-        
+
         // m(X)
         let m_poly = UnivariatePolynomial::lagrange(m_values.clone()).ifft();
         // println!("m_poly: {:?}", m_poly);
         // [m(x)]1
-        let m_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &m_poly, &mut transcript).unwrap();
+        let m_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &m_poly, &mut transcript).unwrap();
         // println!("m_comm_1: {:?}", m_comm_1);
 
         let beta: Fr = transcript.squeeze_challenge();
 
         // π1 = ([m(x)]1)
-        let pi_1 = (m_comm_1.clone());
+        let pi_1 = m_comm_1.clone();
 
-         /***********
+        /***********
          Round 2
         ***********/
         /*
@@ -104,7 +111,7 @@ impl Prover<'_> {
             // sanity check
             assert_eq!(a_i * (&beta + *t_i), m_values[i], "A: not equal");
         }
-        
+
         // println!("a_values: {:?}", a_values);
 
         // println!("A_values: {:?}", a_values);
@@ -113,7 +120,8 @@ impl Prover<'_> {
         let a_poly = UnivariatePolynomial::lagrange(a_values.clone()).ifft();
 
         // 1.c. commit A(X)
-        let a_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &a_poly, &mut transcript).unwrap();
+        let a_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &a_poly, &mut transcript).unwrap();
 
         // 2. commit Q_A(X): Step 4 in the paper
         // 2.a. T(X) in lagrange form
@@ -125,14 +133,22 @@ impl Prover<'_> {
         let scalar_0 = Fr::from(0);
         let scalar_1 = Fr::from(1);
 
-        let z_v_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; t - 1]).chain(vec![scalar_1]).collect();
+        let z_v_poly_coeffs = vec![scalar_1.neg()]
+            .into_iter()
+            .chain(vec![scalar_0; t - 1])
+            .chain(vec![scalar_1])
+            .collect();
         let z_v_poly = UnivariatePolynomial::monomial(z_v_poly_coeffs);
         // println!("z_h_poly: {:?}", z_h_poly);
 
         // vanishing polynomial: X^n - 1, n = group_order_n - 1
         // group_order_n = len(lookup) = m
         // X^n - 1 : [-1, 0, ... , 0, 1] with m-1 0s in between
-        let z_h_poly_coeffs = vec![scalar_1.neg()].into_iter().chain(vec![scalar_0; m - 1]).chain(vec![scalar_1]).collect();
+        let z_h_poly_coeffs = vec![scalar_1.neg()]
+            .into_iter()
+            .chain(vec![scalar_0; m - 1])
+            .chain(vec![scalar_1])
+            .collect();
         let z_h_poly = UnivariatePolynomial::monomial(z_h_poly_coeffs);
         // println!("z_h_poly: {:?}", z_h_poly);
 
@@ -144,7 +160,7 @@ impl Prover<'_> {
         // let a_t_poly = &a_poly.poly_mul(t_poly.clone() + beta);
         // // - m(X)
         // let neg_m_poly = &m_poly * (Fr::from(1).neg());
-        
+
         // // Q_A(X), R(X) = (A(X) * (T(X) + beta) - m(X)) / z_v(X)
         // let add_poly = &(a_t_poly + neg_m_poly);
         // let (q_a_poly, r_poly) = add_poly.div_rem(&z_v_poly);
@@ -154,12 +170,14 @@ impl Prover<'_> {
         // let q_a_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_a_poly, &mut transcript).unwrap();
         // println!("q_a_comm_1: {:?}", q_a_comm_1.clone().to_affine());
 
-        
         // ===============Method 2====================
         // Here we use method 2: commit Q_A(X) with FK
         // implement FK algorithm to compute q_a_comm_1
 
-        let mut q_a_comm_1_fk = G1Affine { x: Fq::zero(), y: Fq::zero()};;
+        let mut q_a_comm_1_fk = G1Affine {
+            x: Fq::zero(),
+            y: Fq::zero(),
+        };
         for (i, &a_val) in a_values.iter().enumerate() {
             if a_val == scalar_0 {
                 continue;
@@ -168,9 +186,8 @@ impl Prover<'_> {
             let a_times_q_t_comm = q_t_comm[i] * a_val;
             q_a_comm_1_fk = (q_a_comm_1_fk + a_times_q_t_comm).into();
         }
-        
-        transcript.write_commitment(&q_a_comm_1_fk);
 
+        transcript.write_commitment(&q_a_comm_1_fk);
 
         // 3. commit B_0(X): Step 5-7 in the paper
         // 3.a. compute B_i values
@@ -181,7 +198,11 @@ impl Prover<'_> {
             let b_i = scalar_1 * ((&beta + f_i).invert().unwrap());
             b_values.push(b_i);
             // sanity check
-            assert_eq!(b_i, scalar_1 * ((&beta + f_i).invert().unwrap()), "B: not equal");
+            assert_eq!(
+                b_i,
+                scalar_1 * ((&beta + f_i).invert().unwrap()),
+                "B: not equal"
+            );
         }
 
         // println!("B_values: {:?}", b_values);
@@ -196,14 +217,16 @@ impl Prover<'_> {
         assert_eq!(r_b_0_poly.evaluate(&scalar_0), scalar_0);
 
         // 3.c. commit B_0(X)
-        let b_0_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &b_0_poly, &mut transcript).unwrap();
+        let b_0_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &b_0_poly, &mut transcript).unwrap();
 
         // 4. commit Q_B(X): Step 8-9 in the paper
         // 4.a. f(X) in coefficient form
         let f_poly = UnivariatePolynomial::lagrange(lookup.clone()).ifft();
         // commit f(X)
-        let f_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &f_poly, &mut transcript).unwrap();
-        
+        let f_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &f_poly, &mut transcript).unwrap();
+
         // 4.b. compute Q_B(X) in coefficient form
         //  Q_B(X) = (B(X) * (f(X) + beta) - 1) / z_h(X)
 
@@ -216,34 +239,39 @@ impl Prover<'_> {
         assert_eq!(r_q_b_poly.evaluate(&scalar_0), scalar_0);
 
         // 4.c. commit Q_B(X): Step 9 in the paper
-        let q_b_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &q_b_poly, &mut transcript).unwrap();
+        let q_b_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &q_b_poly, &mut transcript).unwrap();
 
         // 5. commit P(X): Step 10 in the paper
         // N - 1 - (n - 2)
         // N = len(table) = t
         // n = len(lookup) = m
         let x_exponent_order = t - 1 - (m - 2);
-        let x_exponent_values_in_coeff = vec![scalar_0; x_exponent_order].into_iter().chain(vec![scalar_1]).collect();
+        let x_exponent_values_in_coeff = vec![scalar_0; x_exponent_order]
+            .into_iter()
+            .chain(vec![scalar_1])
+            .collect();
         let x_exponent_poly = UnivariatePolynomial::monomial(x_exponent_values_in_coeff);
 
         // P(X) = B_0(X) * X^(N - 1 - (n - 2))
         let p_poly = b_0_poly.poly_mul(x_exponent_poly.clone());
         // 5.c. commit P(X)
-        let p_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &p_poly, &mut transcript).unwrap();
+        let p_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &p_poly, &mut transcript).unwrap();
 
         let randomness: Vec<Fr> = transcript.squeeze_challenges(2);
-        
+
         // π2 = ([A(X)]1, [Q_A(X)]1, [B_0(X)]1, [f(X)]1, [Q_B(X)]1, [P(X)]1)
         let pi_2 = (
             a_comm_1.clone(),
-            q_a_comm_1_fk.clone(),
+            q_a_comm_1_fk,
             b_0_comm_1.clone(),
             f_comm_1.clone(),
             q_b_comm_1.clone(),
             p_comm_1.clone(),
         );
 
-         /***********
+        /***********
          Round 3
         ***********/
         // 1. V sends random γ,η ∈ F.: Step 1 in the paper
@@ -265,14 +293,15 @@ impl Prover<'_> {
         // Z_H(gamma) = gamma^n - 1
         let z_h_at_gamma = gamma.pow([m as u64]) - Fr::from(1);
         let b_at_gamma = b_0_at_gamma * gamma + b_at_0;
-        let q_b_at_gamma = (b_at_gamma * (f_at_gamma + beta) - Fr::from(1)) * (z_h_at_gamma.invert().unwrap());
+        let q_b_at_gamma =
+            (b_at_gamma * (f_at_gamma + beta) - Fr::from(1)) * (z_h_at_gamma.invert().unwrap());
 
         // 6. batch KZG check: Step 6 in the paper
         // (a) both P and V compute v
         // v = b_0_at_gamma + f_at_gamma * eta + q_b_at_gamma * eta^2
         let v = Self::rlc(b_0_at_gamma, f_at_gamma, q_b_at_gamma, eta);
         // println!("v: {:?}", v);
-        
+
         // (b) compute commitment: pi_gamma = [h(X)]_1
         //     h_poly = (self.rlc(self.B_0_poly, self.f_poly, self.Q_B_poly) - v) / (self.x_poly - gamma)
         let h_poly_add_term_2 = &f_poly * eta;
@@ -284,22 +313,24 @@ impl Prover<'_> {
         // println!("h_poly: {:?}", h_poly);
         // println!("r_h_poly: {:?}", r_h_poly);
         assert_eq!(r_h_poly.evaluate(&scalar_0), scalar_0);
-    
-        let pi_gamma: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &h_poly, &mut transcript).unwrap();
+
+        let pi_gamma: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &h_poly, &mut transcript).unwrap();
         // 3.7 commit A_0(X): Step 7 in the paper
         // (a) compute a_0_comm_1
-        let (a_0_poly, r_a_0_poly) = (a_poly + a_at_0.neg()).div_rem(&x_poly);      
+        let (a_0_poly, r_a_0_poly) = (a_poly + a_at_0.neg()).div_rem(&x_poly);
         // println!("a_0_poly: {:?}", a_0_poly);
         // println!("r_a_0_poly: {:?}", r_a_0_poly);
         assert_eq!(r_a_0_poly.evaluate(&scalar_0), scalar_0);
-        let a_0_comm_1: UnivariateKzgCommitment<G1Affine> = Pcs::commit_and_write(&pp, &a_0_poly, &mut transcript).unwrap();    
+        let a_0_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &a_0_poly, &mut transcript).unwrap();
         // println!("a_0_comm_1: {:?}", a_0_comm_1);
 
         // π3 = (b_0_at_gamma, f_at_gamma, a_at_0, pi_gamma, a_0_comm_1)
         let pi_3 = (
-            b_0_at_gamma.clone(),
-            f_at_gamma.clone(),
-            a_at_0.clone(),
+            b_0_at_gamma,
+            f_at_gamma,
+            a_at_0,
             pi_gamma.clone(),
             a_0_comm_1.clone(),
         );
@@ -310,16 +341,16 @@ impl Prover<'_> {
 
     // random linear combination
     fn rlc(term_1: Fr, term_2: Fr, term_3: Fr, eta: Fr) -> Fr {
-        return term_1 + term_2 * eta + term_3 * eta.pow([2]);
+        term_1 + term_2 * eta + term_3 * eta.pow([2])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_curves::bn256::Fr;
     use crate::backend::cq::preprocessor::preprocess;
-    
+    use halo2_curves::bn256::Fr;
+
     #[test]
     fn test_prove() {
         let table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
@@ -332,6 +363,5 @@ mod tests {
         // 2. generate proof
         let prover = Prover::new(&table, &param, &pp);
         let proof = prover.prove(&lookup, &q_t_comm_poly_coeffs);
-        println!("proof: {:?}", proof);
     }
 }

@@ -2,7 +2,10 @@ use crate::{
     pcs::Additive,
     poly::{univariate::UnivariateBasis::*, Polynomial},
     util::{
-        arithmetic::{div_ceil, horner, powers, radix2_fft, root_of_unity, root_of_unity_inv, Field, WithSmallOrderMulGroup},
+        arithmetic::{
+            div_ceil, horner, powers, radix2_fft, root_of_unity, root_of_unity_inv, Field,
+            WithSmallOrderMulGroup,
+        },
         impl_index, izip_eq,
         parallel::{num_threads, parallelize, parallelize_iter},
         Deserialize, Itertools, Serialize,
@@ -39,8 +42,8 @@ impl<F> Default for UnivariatePolynomial<F> {
 
 impl<F: Field> Additive<F> for UnivariatePolynomial<F> {
     fn msm<'a, 'b>(
-        scalars: impl IntoIterator<Item=&'a F>,
-        bases: impl IntoIterator<Item=&'b Self>,
+        scalars: impl IntoIterator<Item = &'a F>,
+        bases: impl IntoIterator<Item = &'b Self>,
     ) -> Self
     where
         Self: 'b,
@@ -61,7 +64,7 @@ impl<F> UnivariatePolynomial<F> {
         self.coeffs.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=&F> {
+    pub fn iter(&self) -> impl Iterator<Item = &F> {
         self.coeffs.iter()
     }
 
@@ -133,7 +136,7 @@ impl<F: Field> UnivariatePolynomial<F> {
         }
     }
 
-    pub fn vanishing<'a>(points: impl IntoIterator<Item=&'a F>, scalar: F) -> Self {
+    pub fn vanishing<'a>(points: impl IntoIterator<Item = &'a F>, scalar: F) -> Self {
         let points = points.into_iter().collect_vec();
         assert!(!points.is_empty());
 
@@ -217,7 +220,7 @@ impl<F: Field> UnivariatePolynomial<F> {
 
     pub fn poly_mul(&self, rhs: UnivariatePolynomial<F>) -> UnivariatePolynomial<F>
     where
-        F: Field + WithSmallOrderMulGroup<3>
+        F: Field + WithSmallOrderMulGroup<3>,
     {
         assert_eq!(self.basis, Monomial);
         assert_eq!(rhs.basis, Monomial);
@@ -237,7 +240,11 @@ impl<F: Field> UnivariatePolynomial<F> {
         radix2_fft(&mut self_padded, omega, log_size);
         radix2_fft(&mut rhs_padded, omega, log_size);
 
-        let mut result = self_padded.iter().zip(rhs_padded.iter()).map(|(&x, &y)| x * y).collect::<Vec<_>>();
+        let mut result = self_padded
+            .iter()
+            .zip(rhs_padded.iter())
+            .map(|(&x, &y)| x * y)
+            .collect::<Vec<_>>();
 
         radix2_fft(&mut result, omega_inv, log_size);
 
@@ -249,7 +256,7 @@ impl<F: Field> UnivariatePolynomial<F> {
 
     pub fn fft(&self) -> UnivariatePolynomial<F>
     where
-        F: Field + WithSmallOrderMulGroup<3>
+        F: Field + WithSmallOrderMulGroup<3>,
     {
         assert_eq!(self.basis, Monomial);
 
@@ -268,7 +275,7 @@ impl<F: Field> UnivariatePolynomial<F> {
 
     pub fn ifft(&self) -> UnivariatePolynomial<F>
     where
-        F: Field + WithSmallOrderMulGroup<3>
+        F: Field + WithSmallOrderMulGroup<3>,
     {
         assert_eq!(self.basis, Lagrange);
         assert!(self.coeffs.len().is_power_of_two());
@@ -305,11 +312,11 @@ impl<F: Field> Add<F> for UnivariatePolynomial<F> {
             Monomial => {
                 coeffs[0] += rhs;
                 UnivariatePolynomial::monomial(coeffs)
-            },
+            }
             Lagrange => {
                 coeffs.iter_mut().for_each(|coeff| *coeff += rhs);
                 UnivariatePolynomial::lagrange(coeffs)
-            },
+            }
         }
     }
 }
@@ -365,7 +372,7 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> AddAssign<P> for UnivariatePo
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> AddAssign<(BF, P)>
-for UnivariatePolynomial<F>
+    for UnivariatePolynomial<F>
 {
     fn add_assign(&mut self, (scalar, rhs): (BF, P)) {
         let (scalar, rhs) = (scalar.borrow(), rhs.borrow());
@@ -466,7 +473,7 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> SubAssign<P> for UnivariatePo
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> SubAssign<(BF, P)>
-for UnivariatePolynomial<F>
+    for UnivariatePolynomial<F>
 {
     fn sub_assign(&mut self, (scalar, rhs): (BF, P)) {
         *self += (-*scalar.borrow(), rhs);
@@ -568,14 +575,14 @@ impl<F: Field> Div for &UnivariatePolynomial<F> {
 
 impl<F: Field> DivAssign<&UnivariatePolynomial<F>> for UnivariatePolynomial<F> {
     fn div_assign(&mut self, rhs: &UnivariatePolynomial<F>) {
-        let (quotient, remainder) = self.clone().div_rem(&rhs);
+        let (quotient, remainder) = self.clone().div_rem(rhs);
         assert_eq!(remainder, UnivariatePolynomial::zero());
         *self = quotient;
     }
 }
 
 impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> Sum<P> for UnivariatePolynomial<F> {
-    fn sum<I: Iterator<Item=P>>(mut iter: I) -> UnivariatePolynomial<F> {
+    fn sum<I: Iterator<Item = P>>(mut iter: I) -> UnivariatePolynomial<F> {
         let init = match (iter.next(), iter.next()) {
             (Some(lhs), Some(rhs)) => lhs.borrow() + rhs.borrow(),
             (Some(lhs), None) => return lhs.borrow().clone(),
@@ -589,9 +596,9 @@ impl<F: Field, P: Borrow<UnivariatePolynomial<F>>> Sum<P> for UnivariatePolynomi
 }
 
 impl<F: Field, BF: Borrow<F>, P: Borrow<UnivariatePolynomial<F>>> Sum<(BF, P)>
-for UnivariatePolynomial<F>
+    for UnivariatePolynomial<F>
 {
-    fn sum<I: Iterator<Item=(BF, P)>>(mut iter: I) -> UnivariatePolynomial<F> {
+    fn sum<I: Iterator<Item = (BF, P)>>(mut iter: I) -> UnivariatePolynomial<F> {
         let init = match iter.next() {
             Some((scalar, poly)) => {
                 let mut poly = poly.borrow().clone();
@@ -638,9 +645,17 @@ mod tests {
         assert_eq!(p1.evaluate(&Fr::from(2)) + s, p2.evaluate(&Fr::from(2)));
         assert_eq!(p1.evaluate(&Fr::from(3)) + s, p2.evaluate(&Fr::from(3)));
         // lagrange addition
-        let p3 = UnivariatePolynomial::lagrange(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+        let p3 = UnivariatePolynomial::lagrange(vec![
+            Fr::from(1),
+            Fr::from(2),
+            Fr::from(3),
+            Fr::from(4),
+        ]);
         let p4 = p3.clone() + s;
-        assert_eq!(p4.coeffs(), &[Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
+        assert_eq!(
+            p4.coeffs(),
+            &[Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]
+        );
     }
 
     #[test]
@@ -663,8 +678,14 @@ mod tests {
         let p4 = &p2 / &p1;
 
         let test_point = Scalar::random(&mut rand::thread_rng());
-        assert_eq!(p1.evaluate(&test_point) * p2.evaluate(&test_point), p3.evaluate(&test_point));
-        assert_eq!(div(p2.evaluate(&test_point), p1.evaluate(&test_point)), p4.evaluate(&test_point));
+        assert_eq!(
+            p1.evaluate(&test_point) * p2.evaluate(&test_point),
+            p3.evaluate(&test_point)
+        );
+        assert_eq!(
+            div(p2.evaluate(&test_point), p1.evaluate(&test_point)),
+            p4.evaluate(&test_point)
+        );
     }
 
     #[test]
