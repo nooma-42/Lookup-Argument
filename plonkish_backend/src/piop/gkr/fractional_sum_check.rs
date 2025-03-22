@@ -20,7 +20,7 @@ use crate::{
     },
     Error,
 };
-use std::{array, iter, collections::HashMap};
+use std::{array, iter};
 
 type SumCheck<F> = ClassicSumCheck<EvaluationsProver<F>>;
 
@@ -309,62 +309,12 @@ fn err_unmatched_sum_check_output() -> Error {
 }
 
 
-// Helper function to generate all binary combinations of length n
-fn generate_binary_combinations(length: u32) -> Vec<Vec<bool>> {
-    let total_combinations = 1 << length;
-    let mut combinations = Vec::with_capacity(total_combinations);
-
-    for i in 0..total_combinations {
-        let mut combination = Vec::with_capacity(length as usize);
-        for j in 0..length {
-            combination.push((i & (1 << j)) != 0);
-        }
-        combinations.push(combination);
-    }
-
-    combinations
-}
-
-fn binary_to_usize(binary: &[bool]) -> usize {
-    binary.iter().fold(0, |acc, &b| (acc << 1) | (b as usize))
-}
-
-fn p<F: PrimeField>(x: &[bool], y: &[bool], m: &MultilinearPolynomial<F>) -> F {
-    if y.iter().all(|&value| value) {
-        let x_field: Vec<F> = x.iter().map(|&b| F::from(b as u64)).collect();
-        m.evaluate(&x_field)
-    } else {
-        -F::from(1u64)
-    }
-}
-
-fn q<F: PrimeField>(x: &[bool], y: &[bool], t: &MultilinearPolynomial<F>, w: &[MultilinearPolynomial<F>], a: F) -> F {
-    if y.iter().all(|&value| value) {
-        let x_field: Vec<F> = x.iter().map(|&b| F::from(b as u64)).collect();
-        a - t.evaluate(&x_field)
-    } else {
-        let y_index = binary_to_usize(y);
-        let x_field: Vec<F> = x.iter().map(|&b| F::from(b as u64)).collect();
-        a - w[y_index].evaluate(&x_field)
-    }
-}
-
-fn create_multilinear_poly<F: PrimeField>(map: HashMap<Vec<bool>, F>) -> MultilinearPolynomial<F> {
-    let num_vars = map.keys().next().unwrap().len();
-    let mut evals = vec![F::from(0u64); 1 << num_vars];
-    for (input, value) in map {
-        let index = binary_to_usize(&input);
-        evals[index] = value;
-    }
-    MultilinearPolynomial::new(evals)
-}
 
 #[cfg(test)]
 mod test {
     use crate::{
         piop::gkr::fractional_sum_check::{
             prove_fractional_sum_check, verify_fractional_sum_check,
-            generate_binary_combinations, binary_to_usize, p, q, create_multilinear_poly
         },
         poly::multilinear::MultilinearPolynomial,            
         util::{
@@ -420,159 +370,5 @@ mod test {
                 assert_eq!(poly.evaluate(&x), eval);
             }
         }
-    }
-
-    #[test]
-    fn p_and_q_two_column_test() {
-        let all_inputs = generate_binary_combinations(4);
-    
-        // Create MultilinearPolynomials for m, t, and w
-        let m_poly = create_multilinear_poly(HashMap::from([
-            (vec![false, false], Fr::from(7u64)),
-            (vec![false, true], Fr::from(3u64)),
-            (vec![true, false], Fr::from(1u64)),
-            (vec![true, true], Fr::from(1u64)),
-        ]));
-    
-        let t_poly = create_multilinear_poly(HashMap::from([
-            (vec![false, false], Fr::from(1u64)),
-            (vec![false, true], Fr::from(2u64)),
-            (vec![true, false], Fr::from(3u64)),
-            (vec![true, true], Fr::from(4u64)),
-        ]));
-    
-        let w_polys = vec![
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(2u64)),
-                (vec![true, false], Fr::from(3u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ])),
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(2u64)),
-                (vec![false, true], Fr::from(1u64)),
-                (vec![true, false], Fr::from(4u64)),
-                (vec![true, true], Fr::from(2u64)),
-            ])),
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(1u64)),
-                (vec![true, false], Fr::from(1u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ])),
-        ];
-    
-        let a = Fr::from(42u64); // Example value for a
-    
-        let mut p_values = Vec::new();
-        let mut q_values = Vec::new();
-        
-        // let mut divs = Vec::new();
-        // let mut rems = Vec::new();
-        // let mut fractional_sum = Fr::from(0u64);
-        // Calculate p and q for all inputs
-        for input in all_inputs {
-            let x = &input[..2];
-            let y = &input[2..];
-            
-            p_values.push(p(x, y, &m_poly));
-            q_values.push(q(x, y, &t_poly, &w_polys, a));
-
-            println!("p: {:?}", p(x, y, &m_poly));
-            println!("q: {:?}", q(x, y, &t_poly, &w_polys, a));
-            /* let mut div = Fr::from(0u64);
-            let mut rem = Fr::from(0u64);
-            (div, rem) = div_rem(&p(x, y, &m_poly), &q(x, y, &t_poly, &w_polys, a));
-            divs.push(div);
-            rems.push(rem); */
-        }
-        
-        // fractional_sum = sum(chain![&div, &rem]);
-        // println!("Fractional sum: {:?}", fractional_sum);
-    }
-
-    #[test]
-    fn logupgkr_test() {
-        // Generate all binary inputs of length 4
-        let all_inputs = generate_binary_combinations(4);
-    
-        // Create MultilinearPolynomials for m, t, and w
-        let m_poly = create_multilinear_poly(HashMap::from([
-            (vec![false, false], Fr::from(7u64)),
-            (vec![false, true], Fr::from(3u64)),
-            (vec![true, false], Fr::from(1u64)),
-            (vec![true, true], Fr::from(1u64)),
-        ]));
-    
-        let t_poly = create_multilinear_poly(HashMap::from([
-            (vec![false, false], Fr::from(1u64)),
-            (vec![false, true], Fr::from(2u64)),
-            (vec![true, false], Fr::from(3u64)),
-            (vec![true, true], Fr::from(4u64)),
-        ]));
-    
-        let w_polys = vec![
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(2u64)),
-                (vec![true, false], Fr::from(3u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ])),
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(2u64)),
-                (vec![false, true], Fr::from(1u64)),
-                (vec![true, false], Fr::from(4u64)),
-                (vec![true, true], Fr::from(2u64)),
-            ])),
-            create_multilinear_poly(HashMap::from([
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(1u64)),
-                (vec![true, false], Fr::from(1u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ])),
-        ];
-    
-        let a = Fr::from(5u64); // Example value for a
-    
-        let mut p_values = Vec::new();
-        let mut q_values = Vec::new();
-        
-        // Calculate p and q for all inputs
-        for input in all_inputs {
-            let x = &input[..2];
-            let y = &input[2..];
-            
-            p_values.push(p(x, y, &m_poly));
-            q_values.push(q(x, y, &t_poly, &w_polys, a));
-        }
-    
-        let ps = MultilinearPolynomial::new(p_values);
-        let qs = MultilinearPolynomial::new(q_values);
-        let claims = vec![None; 2];
-        let (p_0s, q_0s) = claims.split_at(1);
-        
-        let proof = {
-            let mut transcript = Keccak256Transcript::new(());
-            prove_fractional_sum_check::<Fr>(
-                p_0s.to_vec(),
-                q_0s.to_vec(),
-                [&ps].iter().copied(), 
-                [&qs].iter().copied(), 
-                &mut transcript,
-            )
-            .unwrap();
-            transcript.into_proof()
-        };
-
-        let result = {
-            let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
-            verify_fractional_sum_check::<Fr>(
-                2,
-                p_0s.to_vec(),
-                q_0s.to_vec(),
-                &mut transcript,
-            )
-        };
-        assert_eq!(result.as_ref().map(|_| ()), Ok(()));
     }
 }

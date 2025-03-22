@@ -16,6 +16,7 @@ pub mod baloo;
 pub mod cq;
 pub mod hyperplonk;
 pub mod plookup;
+pub mod logupgkr;
 pub mod unihyperplonk;
 
 pub trait PlonkishBackend<F: Field>: Clone + Debug {
