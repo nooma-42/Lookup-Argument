@@ -63,7 +63,12 @@ pub fn pow_2(n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ops::Add;
+    use std::ops::{Add, Mul};
+    use crate::pcs::univariate::UnivariateKzg;
+    use crate::pcs::PolynomialCommitmentScheme;
+    use halo2_curves::bn256::{Bn256, Fr, G1, G2, G1Affine, G2Affine, pairing};
+    use rand::rngs::OsRng;
+    use crate::util::transcript::Keccak256Transcript;
 
     type Pcs = UnivariateKzg<Bn256>;
 
