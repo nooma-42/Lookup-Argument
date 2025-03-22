@@ -10,6 +10,7 @@ use crate::{
 };
 use halo2_curves::ff::WithSmallOrderMulGroup;
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, time::Instant};
+use crate::backend::cq::generate_table_and_lookup;
 
 pub mod preprocessor;
 pub mod prover;
