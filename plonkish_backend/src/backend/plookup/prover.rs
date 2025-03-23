@@ -326,7 +326,6 @@ mod tests {
             &g, &beta, &gamma, &delta, &table, &h1, &h2, &z, t_poly, f_poly, h1_poly, h2_poly,
             z_poly,
         );
-        println!("{:#?}", poly);
     }
 
     #[test]
@@ -342,6 +341,5 @@ mod tests {
         let mut transcript = Keccak256Transcript::new(());
         prove::<Fr, Pcs>(pp, &mut transcript).unwrap();
         let proof = transcript.into_proof();
-        println!("{:#?}", proof);
     }
 }

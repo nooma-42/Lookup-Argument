@@ -117,10 +117,6 @@ pub fn prove_fractional_sum_check<'a, F: PrimeField>(
         let (p_0s, q_0s) = chain![layers.last().unwrap()]
             .map(|layer| {
                 let [p_l, p_r, q_l, q_r] = layer.polys().map(|poly| poly[0]);
-                println!("p_l: {:?}", p_l);
-                println!("p_r: {:?}", p_r);
-                println!("q_l: {:?}", q_l);
-                println!("q_r: {:?}", q_r);
                 
                 (p_l * q_r + p_r * q_l, q_l * q_r)
             })

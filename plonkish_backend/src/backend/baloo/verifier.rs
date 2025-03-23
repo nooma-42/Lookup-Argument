@@ -140,7 +140,7 @@ impl Verifier<'_> {
         let subtable_pairing_lhs = pairing(&subtable_msm_lhs, &g2_affine.clone());
         let subtable_pairing_rhs = pairing(&subtable_msm_rhs, &z_i_comm_2_affine.clone());
         assert_eq!(subtable_pairing_lhs, subtable_pairing_rhs);
-        println!("Finished to verify: subtable");
+        //println!("Finished to verify: subtable");
 
         // 2. verify w1 for X = α
         // # w1 = X^(d-m+1) * (E(X) - e(α) + (φ(X) - a(α))γ) / X - α
@@ -167,7 +167,7 @@ impl Verifier<'_> {
 
         assert_eq!(w1_lhs, w1_rhs);
 
-        println!("Finished to verify: w1");
+        //println!("Finished to verify: w1");
 
         // 3. verify w2 for X = 0
         // to affine
@@ -219,7 +219,7 @@ impl Verifier<'_> {
         ];
         let rhs = multi_pairing(&w2_pairing_g1_terms, &w2_pairing_g2_terms);
         assert_eq!(w2_lhs, rhs);
-        println!("Finished to verify: w2");
+        //println!("Finished to verify: w2");
 
         // 4. verify w3 for X = β
         let w3_comm_1_affine: G1Affine = w3_comm_1.to_affine();
@@ -251,7 +251,7 @@ impl Verifier<'_> {
         let w3_pairing_g2_terms = vec![g2_affine, z_i_comm_2_affine];
         let w3_rhs = multi_pairing(&w3_pairing_g1_terms, &w3_pairing_g2_terms);
         assert_eq!(w3_lhs, w3_rhs);
-        println!("Finished to verify: w3");
+        //println!("Finished to verify: w3");
 
         // 5. verify w4 for X = ζ
         let p_e_comm_1_affine: G1Affine = variable_base_msm(
@@ -277,7 +277,7 @@ impl Verifier<'_> {
         let w4_pairing_lhs = pairing(&w4_comm_1_affine, &vp.s_g2());
         let w4_pairing_rhs = pairing(&w4_msm_rhs, &g2_affine.clone());
         assert_eq!(w4_pairing_lhs, w4_pairing_rhs);
-        println!("Finished to verify: w4");
+        //println!("Finished to verify: w4");
 
         true
     }
