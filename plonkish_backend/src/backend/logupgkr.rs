@@ -133,10 +133,29 @@ mod test {
     use halo2_curves::bn256::Fr;
 
     #[test]
-    fn logupgkr_e2e_test() {
+    fn logupgkr_e2e_test1() {
+        /* 
+        witness (w_values): (w1, w2) 2 cols
+        1, 2
+        2, 1
+        3, 4
+        1, 2
+
+        multiplicity (m_values): 
+        3, # 3 1s in witness
+        3, # 3 2s in witness
+        1, # 1 3s in witness 
+        1, # 1 4s in witness
+
+        table (t_values):
+        1, # 1 is first element in table being looked up
+        2, # 2 is second element in table being looked up
+        3, # 3 is third element in table being looked up
+        4, # 4 is fourth element in table being looked up
+         */
         // Create example parameter values
         let m_values = HashMap::from([
-            (vec![false, false], Fr::from(7u64)),
+            (vec![false, false], Fr::from(3u64)),
             (vec![false, true], Fr::from(3u64)),
             (vec![true, false], Fr::from(1u64)),
             (vec![true, true], Fr::from(1u64)),
@@ -162,12 +181,6 @@ mod test {
                 (vec![true, false], Fr::from(4u64)),
                 (vec![true, true], Fr::from(2u64)),
             ]),
-            HashMap::from([
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(1u64)),
-                (vec![true, false], Fr::from(1u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ]),
         ];
 
         let a = Fr::from(5u64);
@@ -178,5 +191,57 @@ mod test {
         for timing in &timings {
             println!("{}", timing);
         }
+    }
+
+    #[test]
+    fn logupgkr_e2e_test2() {
+        /* 
+        witness (w_values): (w1) 1 cols
+        1
+        2
+        3
+        1
+
+        multiplicity (m_values): 
+        2, # 2 1s in witness
+        1, # 1 2s in witness
+        1, # 1 3s in witness 
+        1, # 1 4s in witness
+
+        table (t_values):
+        1, # 1 is first element in table being looked up
+        2, # 2 is second element in table being looked up
+        3, # 3 is third element in table being looked up
+        4, # 4 is fourth element in table being looked up
+        */
+
+        let m_values = HashMap::from([
+            (vec![false, false], Fr::from(2u64)),
+            (vec![false, true], Fr::from(1u64)),
+            (vec![true, false], Fr::from(1u64)),
+            (vec![true, true], Fr::from(1u64)),
+        ]);
+
+        let t_values = HashMap::from([
+            (vec![false, false], Fr::from(1u64)),
+            (vec![false, true], Fr::from(2u64)),
+            (vec![true, false], Fr::from(3u64)),
+            (vec![true, true], Fr::from(4u64)),
+        ]);
+        
+        let w_values = vec![
+            HashMap::from([ 
+                (vec![false, false], Fr::from(1u64)),
+                (vec![false, true], Fr::from(2u64)),
+                (vec![true, false], Fr::from(3u64)),
+                (vec![true, true], Fr::from(1u64)),
+            ]),
+        ];
+
+        let a = Fr::from(5u64);
+
+        let timings = LogupGkr::test_logupgkr(m_values, t_values, w_values, a);
+        
+        
     }
 }
