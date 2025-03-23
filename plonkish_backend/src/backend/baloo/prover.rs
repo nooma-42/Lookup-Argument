@@ -1,5 +1,6 @@
 use crate::{
     backend::baloo::util::{log_2, pow_2},
+    backend::baloo::preprocessor::preprocess,
     pcs::{
         univariate::{
             UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgParam, UnivariateKzgProverParam,
@@ -9,13 +10,15 @@ use crate::{
     util::{
         arithmetic::{barycentric_weights, root_of_unity, Field},
         transcript::{
-            FieldTranscript, FieldTranscriptWrite,
-            G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript,
+            FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite,
+            G2TranscriptRead, G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript,
+            TranscriptWrite,
         },
     },
 };
 use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine};
 use std::{collections::HashSet, ops::Mul};
+use rand::rngs::OsRng;
 
 type Pcs = UnivariateKzg<Bn256>;
 type Scalar = Fr;

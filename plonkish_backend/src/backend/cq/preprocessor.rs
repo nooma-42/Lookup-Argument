@@ -49,7 +49,7 @@ pub fn preprocess(
 
 fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1> {
     let start = Instant::now();
-    println!("\n ***************** Start fk() ****************");
+    //println!("\n ***************** Start fk() ****************");
     assert_eq!(coeffs.len(), powers_of_x.len(), "length should be equal");
     let n = coeffs.len();
     assert!(n.is_power_of_two());
@@ -113,7 +113,7 @@ fn fk(coeffs: &mut Vec<Fr>, powers_of_x: &mut Vec<G1Affine>) -> Vec<G1> {
 
     // 4. return first n values
     let mut q_comm_poly_coeffs = result[..n].to_vec();
-    println!("\n ***************** End fk() ****************");
+    //println!("\n ***************** End fk() ****************");
 
     // let duration = start.elapsed();
     // println!("\n ------------fk function: {}ms----------- \n",duration.as_millis());

@@ -103,12 +103,9 @@ pub fn test_cq_by_input(table: Vec<Fr>, lookup: Vec<Fr>) -> Vec<String> {
     );
     let duration3 = start.elapsed();
     timings.push(format!("k={k}, verify time: {}ms", duration3.as_millis()));
-    println!(
-        "------------verify: {}ms------------",
-        duration3.as_millis()
-    );
-    println!("Finished to verify: cq");
-    println!("------------------------------------");
+    //println!("------------verify: {}ms------------",duration3.as_millis());
+    //println!("Finished to verify: cq");
+    //println!("------------------------------------");
     let total_duration = duration1 + duration2 + duration3;
     timings.push(format!(
         "k={k}, total time: {}ms",
@@ -138,11 +135,11 @@ fn gengerate_table_and_lookup(k: usize) -> (Vec<Fr>, Vec<Fr>) {
     lookup.shuffle(&mut rng);
 
     // （3）print table and lookup
-    println!("Table: {:?}", table);
-    println!("Lookup: {:?}", lookup);
+    // println!("Table: {:?}", table);
+    // println!("Lookup: {:?}", lookup);
     let unique_lookup: HashSet<usize> = lookup.iter().cloned().collect();
-    println!("Unique values in lookup: {:?}", unique_lookup);
-    println!("Number of unique values in lookup: {}", unique_lookup.len());
+    // println!("Unique values in lookup: {:?}", unique_lookup);
+    // println!("Number of unique values in lookup: {}", unique_lookup.len());
     // （4）put table and lookup into Fr
     let table_fr: Vec<Fr> = table.iter().map(|&x| Fr::from(x as u64)).collect();
     let lookup_fr: Vec<Fr> = lookup.iter().map(|&x| Fr::from(x as u64)).collect();

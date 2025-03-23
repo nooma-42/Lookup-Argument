@@ -82,7 +82,7 @@ impl Verifier<'_> {
         let g1_affine = G1Affine::from(g1);
         let g2_affine = G2Affine::from(g2);
         // Check 1: round 2.11: A encodes the correct values
-        println!("=== Started Check 1: round 2.11: A encodes the correct values ===");
+        //println!("=== Started Check 1: round 2.11: A encodes the correct values ===");
         // comb = ec_lincomb([
         //          (m_comm_1, 1),
         //          (A_comm_1, -beta)
@@ -102,11 +102,11 @@ impl Verifier<'_> {
         // println!("a_check_lhs: {:?}", a_check_lhs);
         // println!("a_check_rhs: {:?}", a_check_rhs);
         assert_eq!(a_check_lhs, a_check_rhs);
-        println!("=== Finished Check 1: round 2.11: A encodes the correct values ===");
+        //println!("=== Finished Check 1: round 2.11: A encodes the correct values ===");
 
         // Check 2: round 2.12: B_0 has the appropriate degree
         // e(b_0, [x^{N-1-(n-2)}]2) == e(p, [1]2)
-        println!("=== Started Check 2: round 2.12: B_0 has the appropriate degree ===");
+        //println!("=== Started Check 2: round 2.12: B_0 has the appropriate degree ===");
         let b_0_check_lhs = pairing(
             &b_0_comm_1.clone().to_affine(),
             &x_exponent_poly_comm_2.clone().to_affine(),
@@ -115,12 +115,12 @@ impl Verifier<'_> {
         // println!("b_0_check_lhs: {:?}", b_0_check_lhs);
         // println!("b_0_check_rhs: {:?}", b_0_check_rhs);
         assert_eq!(b_0_check_lhs, b_0_check_rhs);
-        println!("=== Finished Check 2: round 2.12: B_0 has the appropriate degree ===");
+        //println!("=== Finished Check 2: round 2.12: B_0 has the appropriate degree ===");
 
         // Check 3: 3.6 (c)
         // c := b_0 + η·cm + η^2·q_b
         // check e(c - [v]1 + gamma * pi_gamma, [1]2) == e(pi_gamma, [x]_2)
-        println!("=== Started Check 3: batched KZG check for the correctness of b_0_at_gamma, f_at_gamma, Q_b_at_gamma ===");
+        //println!("=== Started Check 3: batched KZG check for the correctness of b_0_at_gamma, f_at_gamma, Q_b_at_gamma ===");
         // compute c
         let b_at_0 = Fr::from(t as u64) * a_at_0 * (Fr::from(m as u64).invert().unwrap());
         let z_h_gamma = gamma.pow([m as u64]) - scalar_1;
@@ -168,11 +168,11 @@ impl Verifier<'_> {
         // println!("batch_check_lhs: {:?}", batch_check_lhs);
         // println!("batch_check_rhs: {:?}", batch_check_rhs);
         assert_eq!(batch_check_lhs, batch_check_rhs);
-        println!("=== Finished Check 3: batched KZG check for the correctness of b_0_at_gamma, f_at_gamma, Q_b_at_gamma ===");
+        //println!("=== Finished Check 3: batched KZG check for the correctness of b_0_at_gamma, f_at_gamma, Q_b_at_gamma ===");
 
         // Check 4: 3.7 (b)
         // e(a - [a0]1, [1]2) == e(a0, [x]2)
-        println!("=== Started Check 4: KZG check for the correctness of a_at_0 ===");
+        //println!("=== Started Check 4: KZG check for the correctness of a_at_0 ===");
         // a_0_check_comb = ec_lincomb([
         //     # A_comm_1 - a_at_0
         //     (A_comm_1, 1),
@@ -188,9 +188,9 @@ impl Verifier<'_> {
         // println!("a_0_check_lhs: {:?}", a_0_check_lhs);
         // println!("a_0_check_rhs: {:?}", a_0_check_rhs);
         assert_eq!(a_0_check_lhs, a_0_check_rhs);
-        println!("=== Finished Check 4: KZG check for the correctness of a_at_0 ===");
+        //println!("=== Finished Check 4: KZG check for the correctness of a_at_0 ===");
 
-        println!("Finished to verify proof");
+        //println!("Finished to verify proof");
         true
     }
 

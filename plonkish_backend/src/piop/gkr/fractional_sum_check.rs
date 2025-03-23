@@ -117,6 +117,7 @@ pub fn prove_fractional_sum_check<'a, F: PrimeField>(
         let (p_0s, q_0s) = chain![layers.last().unwrap()]
             .map(|layer| {
                 let [p_l, p_r, q_l, q_r] = layer.polys().map(|poly| poly[0]);
+                
                 (p_l * q_r + p_r * q_l, q_l * q_r)
             })
             .unzip::<_, _, Vec<_>, Vec<_>>();
@@ -303,13 +304,15 @@ fn err_unmatched_sum_check_output() -> Error {
     Error::InvalidSumcheck("Unmatched between sum_check output and query evaluation".to_string())
 }
 
+
+
 #[cfg(test)]
 mod test {
     use crate::{
         piop::gkr::fractional_sum_check::{
             prove_fractional_sum_check, verify_fractional_sum_check,
         },
-        poly::multilinear::MultilinearPolynomial,
+        poly::multilinear::MultilinearPolynomial,            
         util::{
             chain, izip_eq,
             test::{rand_vec, seeded_std_rng},
@@ -318,7 +321,7 @@ mod test {
         },
     };
     use halo2_curves::bn256::Fr;
-    use std::iter;
+    use std::{iter, collections::HashMap};
 
     #[test]
     fn fractional_sum_check() {
