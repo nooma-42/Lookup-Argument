@@ -1,5 +1,8 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{self, baloo, cq};
+use plonkish_backend::backend::{self, baloo, cq, logupgkr};
+use plonkish_backend::halo2_curves::bn256::Fr;
+use plonkish_backend::util::arithmetic::PrimeField;
+use plonkish_backend::util::transcript::Keccak256Transcript;
 use regex::Regex;
 use std::collections::HashMap;
 use std::{
@@ -150,6 +153,102 @@ fn bench_CQ(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     }
 }
 
+fn bench_LogupGKR(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Create test data based on k
+    let table_size = 1 << k.min(10); // 2^k, 最大限制为 2^10 以防止过大
+    
+    // Create simple test vectors (can be adjusted for more complex scenarios)
+    let lookup_size = table_size / 2; // For simplicity, make lookup half the size of table
+    
+    // Create lookup and table vectors
+    let table: Vec<Fr> = (1..=table_size).map(|i| Fr::from(i as u64)).collect();
+    
+    // Create lookup with some repeated values for testing multiplicities
+    let mut lookup = Vec::with_capacity(lookup_size);
+    for i in 0..lookup_size {
+        // Add some repetition pattern - use modulo to create repeating values
+        let value = i % (table_size / 4).max(1) + 1;
+        lookup.push(Fr::from(value as u64));
+    }
+    
+    // Capture and redirect detailed output if not verbose
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| {
+            // Convert to logupgkr format using the utility function
+            let (m_values, t_values, w_values) = logupgkr::util::convert_to_logupgkr_format(lookup, table);
+            
+            // Calculate 'a' parameter (can be any value for testing)
+            let a = Fr::from(table_size as u64 + 1);
+            
+            logupgkr::LogupGkr::<Fr>::test_logupgkr(
+                m_values,
+                t_values,
+                w_values,
+                a,
+            )
+        })
+    } else {
+        println!("Running LogupGKR benchmark with k={}", k);
+        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
+        
+        // Convert to logupgkr format using the utility function
+        let (m_values, t_values, w_values) = logupgkr::util::convert_to_logupgkr_format(lookup, table);
+        
+        // Calculate 'a' parameter (can be any value for testing)
+        let a = Fr::from(table_size as u64 + 1);
+        
+        println!("Running LogupGKR test with converted data...");
+        let result = logupgkr::LogupGkr::<Fr>::test_logupgkr(
+            m_values,
+            t_values,
+            w_values,
+            a,
+        );
+        
+        if verbose {
+            println!("LogupGKR test completed. Results:");
+            for timing in &result {
+                println!("  {}", timing);
+            }
+        }
+        
+        result
+    };
+
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::LogupGKR.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: LogupGKR raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract performance metrics from combined timings
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "LogupGKR times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
+        );
+    }
+
+    // Return structured benchmark result
+    BenchmarkResult {
+        system: System::LogupGKR,
+        k_value: k,
+        setup_time,
+        prove_time,
+        verify_time,
+    }
+}
+
 // Helper function to extract timing information from output
 fn extract_setup_time(timing: &str, debug: bool) -> u64 {
     if debug {
@@ -157,7 +256,7 @@ fn extract_setup_time(timing: &str, debug: bool) -> u64 {
     }
 
     let patterns = [
-        r"------------\?Setup and preprocess: (\d+)ms-----------", // 最匹配示例輸出的模式
+        r"------------\?Setup and preprocess: (\d+)ms-----------",
         r"Setup and preprocess: (\d+)ms",
         r"-+\?Setup and preprocess: (\d+)ms-+",
         r"-+Setup and preprocess: (\d+)ms-+",
@@ -435,11 +534,12 @@ fn display_summary(results: &[BenchmarkResult]) {
 enum System {
     CQ,
     Baloo,
+    LogupGKR,
 }
 
 impl System {
     fn all() -> Vec<System> {
-        vec![System::CQ, System::Baloo]
+        vec![System::CQ, System::Baloo, System::LogupGKR]
     }
 
     fn output_path(&self) -> String {
@@ -458,6 +558,7 @@ impl System {
         match self {
             System::Baloo => bench_baloo(k, verbose, debug),
             System::CQ => bench_CQ(k, verbose, debug),
+            System::LogupGKR => bench_LogupGKR(k, verbose, debug),
         }
     }
 }
@@ -467,6 +568,7 @@ impl Display for System {
         match self {
             System::Baloo => write!(f, "Baloo"),
             System::CQ => write!(f, "CQ"),
+            System::LogupGKR => write!(f, "LogupGKR"),
         }
     }
 }
@@ -484,7 +586,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
                         "CQ" => systems.push(System::CQ),
                         "Baloo" => systems.push(System::Baloo),
                         "baloo" => systems.push(System::Baloo),
-                        _ => panic!("system should be one of {{all, cq, baloo}}"),
+                        "logupgkr" => systems.push(System::LogupGKR),
+                        "LogupGKR" => systems.push(System::LogupGKR),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr}}"),
                     },
 
                     "--k" => {
