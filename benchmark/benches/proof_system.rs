@@ -160,7 +160,7 @@ fn bench_CQ(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Benchm
     }
 }
 
-fn bench_LogupGKR(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+fn bench_logup_gkr(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Create test data based on k
     let table_size = 1 << k.min(10); // 2^k, 最大限制为 2^10 以防止过大
     
@@ -645,7 +645,7 @@ impl System {
         match self {
             System::Baloo => bench_baloo(k, n_to_n_ratio, verbose, debug),
             System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
-            System::LogupGKR => bench_LogupGKR(k, n_to_n_ratio, verbose, debug),
+            System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
             System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
         }
     }

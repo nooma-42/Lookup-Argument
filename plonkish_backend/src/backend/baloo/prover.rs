@@ -45,30 +45,18 @@ impl Prover<'_> {
         }
     }
 
-    /// Compute polynomial multilication naively in O(n^2)
-    fn naive_multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
-        let mut c = vec![Scalar::zero(); coeffs0.len() + coeffs1.len() - 1];
-
-        for i in 0..coeffs0.len() {
-            for j in 0..coeffs1.len() {
-                c[i + j] += coeffs0[i] * coeffs1[j];
-            }
-        }
-        c
-    }
-
     /// Compute polynomial multilication wrapper
-    pub fn multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
+    //pub fn multiplication(coeffs0: &[Scalar], coeffs1: &[Scalar]) -> Vec<Scalar> {
         // TODO: to select different multiplication algs based
         // on the degree of polynomials.
-        Self::naive_multiplication(coeffs0, coeffs1)
-    }
+      //  Self::naive_multiplication(coeffs0, coeffs1)
+    //}
 
     fn eval_rec(
-        tree: &Vec<Vec<Vec<Scalar>>>,
+        tree: &Vec<Vec<UnivariatePolynomial<Scalar>>>,
         k: usize,
         base: usize,
-        f: &[Scalar],
+        f: &UnivariatePolynomial<Scalar>,
         u: &[Scalar],
     ) -> Vec<Scalar> {
         let n = u.len();
@@ -77,12 +65,15 @@ impl Prover<'_> {
         // println!("u={}", scalar_vector_to_string(&u.to_vec()));
 
         if k == 0 {
-            return f.to_vec();
+            assert_eq!(u.len(), 1);
+            if f.is_empty() { return vec![Scalar::zero()]; }
+            return vec![f.evaluate(&u[0])];
         }
-
+        let divisor0 = &tree[k - 1][2 * base];
+        let divisor1 = &tree[k - 1][2 * base + 1];
         // println!("division> k-1={}, left={}, right={}, n={}", k-1, base+0, base+1, n);
-        let (q0, r0) = Self::division(f, &tree[k - 1][2 * base]);
-        let (q1, r1) = Self::division(f, &tree[k - 1][2 * base + 1]);
+        let (_q0, r0) = f.div_rem(divisor0);
+        let (_q1, r1) = f.div_rem(divisor1);
 
         let (u0, u1) = u.split_at(n / 2);
         // println!("u0={}", scalar_vector_to_string(&u0.to_vec()));
@@ -93,56 +84,29 @@ impl Prover<'_> {
         rs0
     }
 
-    // TODO: https://en.wikipedia.org/wiki/Synthetic_division
-    fn division(dividend: &[Scalar], divisor: &[Scalar]) -> (Vec<Scalar>, Vec<Scalar>) {
-        // Important: if dividend.len() < divisor.len(), then the quotient is zero and
-        // the remainder is the dividend.
-        if dividend.len() < divisor.len() {
-            return (vec![Scalar::zero()], dividend.to_vec());
-        }
-
-        let mut quotient = vec![Scalar::zero(); dividend.len() - divisor.len() + 1];
-        let mut remainder = dividend.to_vec();
-
-        for i in (0..quotient.len()).rev() {
-            quotient[i] =
-                remainder[i + divisor.len() - 1] * divisor[divisor.len() - 1].invert().unwrap();
-            for j in 0..divisor.len() {
-                remainder[i + j] -= quotient[i] * divisor[j];
-            }
-        }
-
-        // Remove leading zeros
-        while remainder.len() > 1 && remainder[remainder.len() - 1] == Scalar::zero() {
-            remainder.pop();
-        }
-
-        (quotient, remainder)
-    }
-
     /// Compute subproduct tree in O(M(n) * log(n)) time, where O(M(n)) is the
     /// asymptotic complexity of multiplication, and equal to O(nlog(n)) if using
     /// FFT-based fast multiplication.
     ///
     /// Return a vector of levels, each level is a vector of polynomials,
     /// and each polynomial is a vector of coefficients.
-    fn contruct_subproduct_tree(domain: &[Scalar]) -> Vec<Vec<Vec<Scalar>>> {
+    fn contruct_subproduct_tree(domain: &[Scalar]) -> Vec<Vec<UnivariatePolynomial<Scalar>>> {
         let n = domain.len();
         assert!(n.is_power_of_two());
 
-        let mut tree = Vec::new();
-        let mut level = Vec::new();
+        let mut tree: Vec<Vec<UnivariatePolynomial<Scalar>>> = Vec::new();
+        let mut level: Vec<UnivariatePolynomial<Scalar>> = Vec::new();
         for u in domain.iter() {
-            level.push(vec![-*u, Scalar::one()]);
+            level.push(UnivariatePolynomial::monomial(vec![-*u, Scalar::one()]));
         }
         tree.push(level.clone());
 
         for k in 0..log_2(n) {
             let mut new_level = Vec::new();
             for i in 0..(n >> (k + 1)) {
-                let left = &level[2 * i];
-                let right = &level[2 * i + 1];
-                let poly = Self::multiplication(left, right);
+                let left: &UnivariatePolynomial<Scalar> = &level[2 * i];
+                let right: &UnivariatePolynomial<Scalar> = &level[2 * i + 1];
+                let poly: UnivariatePolynomial<Scalar> = left.poly_mul(right.clone());
                 new_level.push(poly);
             }
             tree.push(new_level.clone());
@@ -182,12 +146,12 @@ impl Prover<'_> {
     /// can be computed in O(n) time.
     ///
     fn linear_combination_linear_moduli_fix(
-        tree: &Vec<Vec<Vec<Scalar>>>,
+        tree: &Vec<Vec<UnivariatePolynomial<Scalar>>>,
         k: usize,
         base: usize,
         c: &[Scalar],
         u: &[Scalar],
-    ) -> Vec<Scalar> {
+    ) -> UnivariatePolynomial<Scalar> {
         let n = u.len();
 
         // println!("lc_fix> k={}, base={}, n={}", k, base, n);
@@ -197,24 +161,24 @@ impl Prover<'_> {
         if k == 0 {
             assert_eq!(c.len(), 1);
             assert_eq!(u.len(), 1);
-            return vec![c[0]];
+            return UnivariatePolynomial::monomial(vec![c[0]]);
         }
 
         assert!(n.is_power_of_two());
         assert_eq!(n, pow_2(k));
 
-        let node0 = &tree[k - 1][2 * base];
-        let node1 = &tree[k - 1][2 * base + 1];
+        let node0: &UnivariatePolynomial<Scalar> = &tree[k - 1][2 * base];
+        let node1: &UnivariatePolynomial<Scalar> = &tree[k - 1][2 * base + 1];
 
         let (c0, c1) = c.split_at(n / 2);
         let (u0, u1) = u.split_at(n / 2);
 
-        let r0 = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base, c0, u0);
-        let r1 = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base + 1, c1, u1);
+        let r0: UnivariatePolynomial<Scalar> = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base, c0, u0);
+        let r1: UnivariatePolynomial<Scalar> = Self::linear_combination_linear_moduli_fix(tree, k - 1, 2 * base + 1, c1, u1);
 
-        let poly0 = UnivariatePolynomial::monomial(Self::multiplication(node1, &r0));
-        let poly1 = UnivariatePolynomial::monomial(Self::multiplication(node0, &r1));
-        (&poly0 + &poly1).coeffs().to_vec()
+        let term0 = node1.poly_mul(r0);
+        let term1 = node0.poly_mul(r1);
+        &term0 + &term1
     }
 
     /// Polynomial interpolation in O(M(n) * log(n)) time.
@@ -281,14 +245,14 @@ impl Prover<'_> {
         //     }
         //     println!("g={}", scalar_vector_to_string(&g.coeffs));
         // }
-
-        Self::linear_combination_linear_moduli_fix(
+        let final_poly = Self::linear_combination_linear_moduli_fix(
             &tree,
             log_2(n),
             0,
             &bary_centric_weights,
             domain,
-        )
+        );
+        final_poly.coeffs().to_vec()
     }
 
     pub fn prove(&self, lookup: &Vec<Fr>) -> Vec<u8> {

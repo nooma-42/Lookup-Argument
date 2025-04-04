@@ -29,7 +29,8 @@ pub enum UnivariateBasis {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnivariatePolynomial<F> {
+pub struct 
+UnivariatePolynomial<F> {
     basis: UnivariateBasis,
     coeffs: Vec<F>,
 }
