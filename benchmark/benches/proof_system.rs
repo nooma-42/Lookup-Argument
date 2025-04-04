@@ -24,7 +24,7 @@ const OUTPUT_DIR: &str = "../target/bench";
 
 fn main() {
     // Parse arguments
-    let (systems, k_range, verbose, output_format, debug) = parse_args();
+    let (systems, k_range, n_to_n_ratio, verbose, output_format, debug) = parse_args();
     create_output(&systems);
 
     // Store all benchmark results for final summary
@@ -34,10 +34,10 @@ fn main() {
     k_range.for_each(|k| {
         systems.iter().for_each(|system| {
             if verbose {
-                println!("→ Running {} benchmark with k = {}", system.to_string(), k);
+                println!("→ Running {} benchmark with k = {}, N:n ratio = {}", system.to_string(), k, n_to_n_ratio);
             }
 
-            let result = system.bench(k, verbose, debug);
+            let result = system.bench(k, n_to_n_ratio, verbose, debug);
             all_results.push(result);
         })
     });
@@ -59,6 +59,7 @@ fn main() {
 struct BenchmarkResult {
     system: System,
     k_value: usize,
+    n_to_n_ratio: usize,
     setup_time: u64,  // in milliseconds
     prove_time: u64,  // in milliseconds
     verify_time: u64, // in milliseconds
@@ -73,7 +74,7 @@ enum OutputFormat {
     JSON,    // JSON format
 }
 
-fn bench_baloo(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+fn bench_baloo(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
         with_suppressed_output(|| plonkish_backend::backend::baloo::Baloo::test_baloo_by_k(k))
@@ -109,13 +110,14 @@ fn bench_baloo(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     BenchmarkResult {
         system: System::Baloo,
         k_value: k,
+        n_to_n_ratio,
         setup_time,
         prove_time,
         verify_time,
     }
 }
 
-fn bench_CQ(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+fn bench_CQ(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
         with_suppressed_output(|| plonkish_backend::backend::cq::test_cq_by_k(k))
@@ -151,18 +153,19 @@ fn bench_CQ(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     BenchmarkResult {
         system: System::CQ,
         k_value: k,
+        n_to_n_ratio,
         setup_time,
         prove_time,
         verify_time,
     }
 }
 
-fn bench_LogupGKR(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+fn bench_LogupGKR(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Create test data based on k
     let table_size = 1 << k.min(10); // 2^k, 最大限制为 2^10 以防止过大
     
-    // Create simple test vectors (can be adjusted for more complex scenarios)
-    let lookup_size = table_size / 2; // For simplicity, make lookup half the size of table
+    // Calculate lookup size based on the ratio N:n
+    let lookup_size = table_size / n_to_n_ratio;
     
     // Create lookup and table vectors
     let table: Vec<Fr> = (1..=table_size).map(|i| Fr::from(i as u64)).collect();
@@ -192,7 +195,7 @@ fn bench_LogupGKR(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
             )
         })
     } else {
-        println!("Running LogupGKR benchmark with k={}", k);
+        println!("Running LogupGKR benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
         println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
         
         // Convert to logupgkr format using the utility function
@@ -247,16 +250,17 @@ fn bench_LogupGKR(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     BenchmarkResult {
         system: System::LogupGKR,
         k_value: k,
+        n_to_n_ratio,
         setup_time,
         prove_time,
         verify_time,
     }
 }
 
-fn bench_plookup(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // Calculate table and lookup sizes based on k
+fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Calculate table and lookup sizes based on k and ratio
     let table_size = 1 << k;
-    let lookup_size = table_size / 2; // For simplicity, make lookup half the size of table
+    let lookup_size = table_size / n_to_n_ratio;
     
     // Generate table and lookup values using the utility function from CQ
     let (table, lookup) = cq::generate_table_and_lookup(table_size, lookup_size);
@@ -270,7 +274,7 @@ fn bench_plookup(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
             )
         })
     } else {
-        println!("Running Plookup benchmark with k={}", k);
+        println!("Running Plookup benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
         println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
         
         let result = PlookupBn256::test_plookup_by_input(
@@ -316,6 +320,7 @@ fn bench_plookup(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     BenchmarkResult {
         system: System::Plookup,
         k_value: k,
+        n_to_n_ratio,
         setup_time,
         prove_time,
         verify_time,
@@ -467,22 +472,23 @@ where
 fn display_table_results(results: &[BenchmarkResult]) {
     println!("\n✓ Results:");
     println!(
-        "┌──────────┬─────────┬────────────────────┬──────────────┬───────────────┬────────────┐"
+        "┌──────────┬─────────┬─────────┬────────────────────┬──────────────┬───────────────┬────────────┐"
     );
     println!(
-        "│ System   │ K-value │ Setup+Preprocess   │ Prove        │ Verify        │ Total      │"
+        "│ System   │ K-value │ N:n     │ Setup+Preprocess   │ Prove        │ Verify        │ Total      │"
     );
     println!(
-        "├──────────┼─────────┼────────────────────┼──────────────┼───────────────┼────────────┤"
+        "├──────────┼─────────┼─────────┼────────────────────┼──────────────┼───────────────┼────────────┤"
     );
 
     // Add data rows
     for result in results {
         let total = result.setup_time + result.prove_time + result.verify_time;
         println!(
-            "│ {:<8} │ {:<7} │ {:<18} │ {:<12} │ {:<13} │ {:<10} │",
+            "│ {:<8} │ {:<7} │ {:<7} │ {:<18} │ {:<12} │ {:<13} │ {:<10} │",
             result.system.to_string(),
             result.k_value,
+            result.n_to_n_ratio,
             format!("{}ms", result.setup_time),
             format!("{}ms", result.prove_time),
             format!("{}ms", result.verify_time),
@@ -491,7 +497,7 @@ fn display_table_results(results: &[BenchmarkResult]) {
     }
 
     println!(
-        "└──────────┴─────────┴────────────────────┴──────────────┴───────────────┴────────────┘"
+        "└──────────┴─────────┴─────────┴────────────────────┴──────────────┴───────────────┴────────────┘"
     );
 }
 
@@ -499,17 +505,18 @@ fn display_table_results(results: &[BenchmarkResult]) {
 fn display_compact_results(results: &[BenchmarkResult]) {
     println!("\n✓ Results:");
     println!(
-        "{:10} {:7} {:12} {:10} {:10} {:10}",
-        "System", "K", "Setup (ms)", "Prove (ms)", "Verify (ms)", "Total (ms)"
+        "{:10} {:7} {:7} {:12} {:10} {:10} {:10}",
+        "System", "K", "N:n", "Setup (ms)", "Prove (ms)", "Verify (ms)", "Total (ms)"
     );
-    println!("{}", "-".repeat(60));
+    println!("{}", "-".repeat(70));
 
     for result in results {
         let total = result.setup_time + result.prove_time + result.verify_time;
         println!(
-            "{:10} {:7} {:12} {:10} {:10} {:10}",
+            "{:10} {:7} {:7} {:12} {:10} {:10} {:10}",
             result.system.to_string(),
             result.k_value,
+            result.n_to_n_ratio,
             result.setup_time,
             result.prove_time,
             result.verify_time,
@@ -520,13 +527,14 @@ fn display_compact_results(results: &[BenchmarkResult]) {
 
 // Display results in CSV format
 fn display_csv_results(results: &[BenchmarkResult]) {
-    println!("System,K,SetupTime,ProveTime,VerifyTime,TotalTime");
+    println!("System,K,N:n,SetupTime,ProveTime,VerifyTime,TotalTime");
     for result in results {
         let total = result.setup_time + result.prove_time + result.verify_time;
         println!(
-            "{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{}",
             result.system,
             result.k_value,
+            result.n_to_n_ratio,
             result.setup_time,
             result.prove_time,
             result.verify_time,
@@ -543,6 +551,7 @@ fn display_json_results(results: &[BenchmarkResult]) {
         println!("  {{");
         println!("    \"system\": \"{}\",", result.system);
         println!("    \"k_value\": {},", result.k_value);
+        println!("    \"n_to_n_ratio\": {},", result.n_to_n_ratio);
         println!("    \"setup_time\": {},", result.setup_time);
         println!("    \"prove_time\": {},", result.prove_time);
         println!("    \"verify_time\": {},", result.verify_time);
@@ -568,9 +577,9 @@ fn display_summary(results: &[BenchmarkResult]) {
     }
 
     println!("\n📊 Benchmark Summary:");
-    println!("┌──────────┬─────────────┬─────────────┬────────────┬─────────────┐");
-    println!("│ System   │ K Range     │ Avg Setup   │ Avg Prove  │ Avg Verify  │");
-    println!("├──────────┼─────────────┼─────────────┼────────────┼─────────────┤");
+    println!("┌──────────┬─────────────┬─────────┬─────────────┬────────────┬─────────────┐");
+    println!("│ System   │ K Range     │ N:n     │ Avg Setup   │ Avg Prove  │ Avg Verify  │");
+    println!("├──────────┼─────────────┼─────────┼─────────────┼────────────┼─────────────┤");
 
     for (system, sys_results) in system_summaries {
         // Calculate averages
@@ -589,18 +598,22 @@ fn display_summary(results: &[BenchmarkResult]) {
         } else {
             format!("{}..{}", min_k, max_k)
         };
+        
+        // Get N:n ratio (should be the same for all results in the group)
+        let n_to_n_ratio = sys_results.first().map(|r| r.n_to_n_ratio).unwrap_or(2);
 
         println!(
-            "│ {:<8} │ {:<11} │ {:<11} │ {:<10} │ {:<11} │",
+            "│ {:<8} │ {:<11} │ {:<7} │ {:<11} │ {:<10} │ {:<11} │",
             system.to_string(),
             k_range,
+            n_to_n_ratio,
             format!("{}ms", avg_setup),
             format!("{}ms", avg_prove),
             format!("{}ms", avg_verify)
         );
     }
 
-    println!("└──────────┴─────────────┴─────────────┴────────────┴─────────────┘");
+    println!("└──────────┴─────────────┴─────────┴─────────────┴────────────┴─────────────┘");
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -627,13 +640,13 @@ impl System {
             .unwrap()
     }
 
-    // Benchmark a system with k value
-    fn bench(&self, k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Benchmark a system with k value and N:n ratio
+    fn bench(&self, k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
         match self {
-            System::Baloo => bench_baloo(k, verbose, debug),
-            System::CQ => bench_CQ(k, verbose, debug),
-            System::LogupGKR => bench_LogupGKR(k, verbose, debug),
-            System::Plookup => bench_plookup(k, verbose, debug),
+            System::Baloo => bench_baloo(k, n_to_n_ratio, verbose, debug),
+            System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
+            System::LogupGKR => bench_LogupGKR(k, n_to_n_ratio, verbose, debug),
+            System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
         }
     }
 }
@@ -649,11 +662,11 @@ impl Display for System {
     }
 }
 
-fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
-    let (systems, k_range, verbose, output_format, debug) =
+fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) {
+    let (systems, k_range, n_to_n_ratio, verbose, output_format, debug) =
         args().chain(Some("".to_string())).tuple_windows().fold(
-            (Vec::new(), 20..26, false, OutputFormat::Table, false),
-            |(mut systems, mut k_range, mut verbose, mut output_format, mut debug),
+            (Vec::new(), 20..26, 2, false, OutputFormat::Table, false), // Default N:n ratio is 2
+            |(mut systems, mut k_range, mut n_to_n_ratio, mut verbose, mut output_format, mut debug),
              (key, value)| {
                 match key.as_str() {
                     "--system" => match value.as_str() {
@@ -678,6 +691,12 @@ fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
                             k_range.end = k_range.start + 1;
                         }
                     }
+                    "--ratio" | "--n-to-n-ratio" => {
+                        n_to_n_ratio = value.parse().expect("N:n ratio to be usize");
+                        if n_to_n_ratio < 1 {
+                            panic!("N:n ratio must be at least 1");
+                        }
+                    }
                     "--verbose" | "-v" => {
                         verbose = true;
                     }
@@ -693,7 +712,7 @@ fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
                     },
                     _ => {}
                 }
-                (systems, k_range, verbose, output_format, debug)
+                (systems, k_range, n_to_n_ratio, verbose, output_format, debug)
             },
         );
 
@@ -702,7 +721,7 @@ fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
         systems = System::all();
     };
 
-    (systems, k_range, verbose, output_format, debug)
+    (systems, k_range, n_to_n_ratio, verbose, output_format, debug)
 }
 
 fn create_output(systems: &[System]) {
