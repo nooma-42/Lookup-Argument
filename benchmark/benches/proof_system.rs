@@ -1,6 +1,7 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{self, baloo, cq, logupgkr};
-use plonkish_backend::halo2_curves::bn256::Fr;
+use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup};
+use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
+use plonkish_backend::pcs::univariate::UnivariateKzg;
 use plonkish_backend::util::arithmetic::PrimeField;
 use plonkish_backend::util::transcript::Keccak256Transcript;
 use regex::Regex;
@@ -15,6 +16,9 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+
+// Type alias for Plookup with BN256 curve
+type PlookupBn256 = plookup::Plookup<Fr, UnivariateKzg<Bn256>>;
 
 const OUTPUT_DIR: &str = "../target/bench";
 
@@ -242,6 +246,75 @@ fn bench_LogupGKR(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Return structured benchmark result
     BenchmarkResult {
         system: System::LogupGKR,
+        k_value: k,
+        setup_time,
+        prove_time,
+        verify_time,
+    }
+}
+
+fn bench_plookup(k: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Calculate table and lookup sizes based on k
+    let table_size = 1 << k;
+    let lookup_size = table_size / 2; // For simplicity, make lookup half the size of table
+    
+    // Generate table and lookup values using the utility function from CQ
+    let (table, lookup) = cq::generate_table_and_lookup(table_size, lookup_size);
+    
+    // Capture and redirect detailed output if not verbose
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| {
+            PlookupBn256::test_plookup_by_input(
+                table.clone(),
+                lookup.clone(),
+            )
+        })
+    } else {
+        println!("Running Plookup benchmark with k={}", k);
+        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
+        
+        let result = PlookupBn256::test_plookup_by_input(
+            table.clone(),
+            lookup.clone(),
+        );
+        
+        if verbose {
+            println!("Plookup test completed. Results:");
+            for timing in &result {
+                println!("  {}", timing);
+            }
+        }
+        
+        result
+    };
+
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::Plookup.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: Plookup raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract performance metrics from combined timings
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "Plookup times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
+        );
+    }
+
+    // Return structured benchmark result
+    BenchmarkResult {
+        system: System::Plookup,
         k_value: k,
         setup_time,
         prove_time,
@@ -535,11 +608,12 @@ enum System {
     CQ,
     Baloo,
     LogupGKR,
+    Plookup,
 }
 
 impl System {
     fn all() -> Vec<System> {
-        vec![System::CQ, System::Baloo, System::LogupGKR]
+        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup]
     }
 
     fn output_path(&self) -> String {
@@ -559,6 +633,7 @@ impl System {
             System::Baloo => bench_baloo(k, verbose, debug),
             System::CQ => bench_CQ(k, verbose, debug),
             System::LogupGKR => bench_LogupGKR(k, verbose, debug),
+            System::Plookup => bench_plookup(k, verbose, debug),
         }
     }
 }
@@ -569,6 +644,7 @@ impl Display for System {
             System::Baloo => write!(f, "Baloo"),
             System::CQ => write!(f, "CQ"),
             System::LogupGKR => write!(f, "LogupGKR"),
+            System::Plookup => write!(f, "Plookup"),
         }
     }
 }
@@ -588,7 +664,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, bool, OutputFormat, bool) {
                         "baloo" => systems.push(System::Baloo),
                         "logupgkr" => systems.push(System::LogupGKR),
                         "LogupGKR" => systems.push(System::LogupGKR),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr}}"),
+                        "plookup" => systems.push(System::Plookup),
+                        "Plookup" => systems.push(System::Plookup),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup}}"),
                     },
 
                     "--k" => {
