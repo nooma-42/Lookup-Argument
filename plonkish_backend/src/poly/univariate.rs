@@ -35,7 +35,7 @@ UnivariatePolynomial<F> {
     coeffs: Vec<F>,
 }
 
-impl<F> Default for UnivariatePolynomial<F> {
+impl<F: Field> Default for UnivariatePolynomial<F> {
     fn default() -> Self {
         UnivariatePolynomial::zero()
     }
@@ -53,7 +53,7 @@ impl<F: Field> Additive<F> for UnivariatePolynomial<F> {
     }
 }
 
-impl<F> UnivariatePolynomial<F> {
+impl<F: Field> UnivariatePolynomial<F> {
     pub const fn zero() -> Self {
         Self {
             basis: Monomial,
@@ -85,6 +85,35 @@ impl<F> UnivariatePolynomial<F> {
         assert_eq!(self.basis, Monomial);
 
         self.coeffs().len().checked_sub(1).unwrap_or_default()
+    }
+
+    pub fn compose(&self, other: &Self) -> Self {
+        assert_eq!(self.basis, Monomial);
+        assert_eq!(other.basis, Monomial);
+
+        if self.is_empty() {
+            return Self::zero();
+        }
+
+        // Start with constant term
+        let mut result = Self::monomial(vec![self.coeffs[0]]);
+        if self.coeffs.len() == 1 {
+            return result;
+        }
+
+        // Compute powers of other polynomial
+        let mut power = other.clone();
+
+        // Add each term: coefficient * other^i
+        for coeff in self.coeffs.iter().skip(1) {
+            if !coeff.is_zero_vartime() {
+                let term = &power * coeff;
+                result += term;
+            }
+            power = &power * other;
+        }
+
+        result
     }
 }
 
@@ -520,7 +549,7 @@ impl<F: Field> MulAssign<&F> for UnivariatePolynomial<F> {
 impl<F: Field> Mul for UnivariatePolynomial<F> {
     type Output = UnivariatePolynomial<F>;
 
-    fn mul(mut self, rhs: UnivariatePolynomial<F>) -> UnivariatePolynomial<F> {
+    fn mul(mut self, rhs: Self) -> UnivariatePolynomial<F> {
         self *= &rhs;
         self
     }
