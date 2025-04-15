@@ -327,6 +327,56 @@ fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> B
     }
 }
 
+fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Note: Caulk's test_caulk_by_k currently uses a fixed N:n ratio of 2 internally.
+    // Warn if the requested ratio is different.
+    if n_to_n_ratio != 2 && (verbose || debug) {
+            println!("WARN: Caulk benchmark currently uses a fixed N:n ratio of 2, ignoring provided ratio {}", n_to_n_ratio);
+    }
+
+    // Capture and redirect detailed output if not verbose
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k))
+    } else {
+        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k)
+    };
+
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::Caulk.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: Caulk raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract performance metrics from combined timings
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "Caulk times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
+        );
+    }
+
+    // Return structured benchmark result
+    BenchmarkResult {
+        system: System::Caulk,
+        k_value: k,
+        // Store the requested ratio, even if the underlying function doesn't use it yet.
+        n_to_n_ratio,
+        setup_time,
+        prove_time,
+        verify_time,
+    }
+}
+
 // Helper function to extract timing information from output
 fn extract_setup_time(timing: &str, debug: bool) -> u64 {
     if debug {
@@ -622,11 +672,12 @@ enum System {
     Baloo,
     LogupGKR,
     Plookup,
+    Caulk,
 }
 
 impl System {
     fn all() -> Vec<System> {
-        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup]
+        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk]
     }
 
     fn output_path(&self) -> String {
@@ -647,6 +698,7 @@ impl System {
             System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
             System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
             System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
+            System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
         }
     }
 }
@@ -658,6 +710,7 @@ impl Display for System {
             System::CQ => write!(f, "CQ"),
             System::LogupGKR => write!(f, "LogupGKR"),
             System::Plookup => write!(f, "Plookup"),
+            System::Caulk => write!(f, "Caulk"),
         }
     }
 }
@@ -679,7 +732,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) 
                         "LogupGKR" => systems.push(System::LogupGKR),
                         "plookup" => systems.push(System::Plookup),
                         "Plookup" => systems.push(System::Plookup),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup}}"),
+                        "caulk" => systems.push(System::Caulk),
+                        "Caulk" => systems.push(System::Caulk),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk}}"),
                     },
 
                     "--k" => {
