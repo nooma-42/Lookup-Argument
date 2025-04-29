@@ -20,6 +20,7 @@ pub mod preprocessor;
 pub mod prover;
 pub mod sostable;
 pub mod transcript;
+pub mod types;
 pub mod util;
 pub mod verifier;
 
