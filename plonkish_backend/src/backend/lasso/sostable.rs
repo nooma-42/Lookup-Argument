@@ -17,20 +17,6 @@ pub struct Params {
     table: SOSTable,
 }
 
-#[derive(Clone)]
-pub struct GrandProductData {
-    pub f_0_r: Scalar,
-    pub f_1_r: Scalar,
-    pub f_r_0: Scalar,
-    pub f_r_1: Scalar,
-    pub product: Scalar,
-    pub f_0_r_proof: G1Affine,
-    pub f_1_r_proof: G1Affine,
-    pub f_r_0_proof: G1Affine,
-    pub f_r_1_proof: G1Affine,
-    pub product_proof: G1Affine,
-}
-
 impl SOSTable {
     pub fn new(l: usize, c: usize, k: usize, tables: Vec<Vec<i64>>) -> Self {
         assert_eq!(tables.len(), k * c);

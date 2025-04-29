@@ -19,6 +19,7 @@ use std::{fmt::Debug, hash::Hash, marker::PhantomData}; // Removed HashMap, Inst
 pub mod preprocessor;
 pub mod prover;
 pub mod sostable;
+pub mod transcript;
 pub mod util;
 pub mod verifier;
 
@@ -232,7 +233,6 @@ mod tests {
 }
 
 // --- Data Structures (Consistent Definitions) ---
-
 /// Lasso public parameters info provided by the user.
 #[derive(Clone, Debug)]
 pub struct LassoInfo<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
@@ -243,78 +243,6 @@ pub struct LassoInfo<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
     pub subtables: Vec<Vec<F>>,    // Subtables T_0, ..., T_{alpha-1}
     pub witness: Vec<F>,           // Witness assignments a = [a_0, ..., a_{m-1}]
     pub pcs_param_raw: Pcs::Param, // Raw PCS params before trimming
-}
-
-// --- Proof Structures ---
-
-/// Lasso proof message round 1
-#[derive(Clone, Debug)]
-pub struct Message1<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) a_comm: Pcs::Commitment,
-    pub(crate) logm: usize,
-    pub(crate) dim_comm: Vec<Pcs::Commitment>,
-    pub(crate) _marker: PhantomData<F>, // Keep phantom data if needed for generics not used in fields
-}
-
-/// Lasso proof message round 2
-#[derive(Clone, Debug)]
-pub struct Message2<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) a_eval: F,
-    pub(crate) E_comm: Vec<Pcs::Commitment>,
-    pub(crate) read_comm: Vec<Pcs::Commitment>,
-    pub(crate) final_comm: Vec<Pcs::Commitment>,
-    // Placeholder for PCS proofs related to `a` opening - handled implicitly by transcript
-    pub(crate) placeholder_proofs: PhantomData<Pcs>,
-}
-
-/// Lasso proof message round 3
-#[derive(Clone, Debug)]
-pub struct Message3<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) rz: Point<F, Pcs::Polynomial>, // Point uses Polynomial assoc type
-    pub(crate) E_eval: Vec<F>,
-    // Placeholder for PCS proofs related to `E` openings at rz
-    pub(crate) placeholder_proofs: PhantomData<Pcs>,
-}
-
-/// Lasso proof message round 4
-#[derive(Clone, Debug)]
-pub struct Message4<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) S0_comm: Vec<Pcs::Commitment>,
-    pub(crate) S_comm: Vec<Pcs::Commitment>,
-    pub(crate) RS_comm: Vec<Pcs::Commitment>,
-    pub(crate) WS_comm: Vec<Pcs::Commitment>,
-    pub(crate) _marker: PhantomData<F>,
-}
-
-/// Data associated with Grand Product checks (PCS openings)
-#[derive(Clone, Debug)]
-pub struct GrandProductData<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) f_0_r: F,   // Evaluation f(0, r')
-    pub(crate) f_1_r: F,   // Evaluation f(1, r')
-    pub(crate) f_r_0: F,   // Evaluation f(r', 0)
-    pub(crate) f_r_1: F,   // Evaluation f(r', 1)
-    pub(crate) product: F, // Evaluation f(1, 0..0) = Root_P
-    // Placeholder for PCS proofs - handled implicitly by transcript
-    pub(crate) placeholder_proofs: PhantomData<Pcs>,
-}
-
-/// Lasso proof message round 5
-#[derive(Clone, Debug)]
-pub struct Message5<F: PrimeField, Pcs: PolynomialCommitmentScheme<F>> {
-    pub(crate) r_prime: Vec<Point<F, Pcs::Polynomial>>, // alpha points [b, r'] for S0
-    pub(crate) r_prime2: Vec<Point<F, Pcs::Polynomial>>, // alpha points [b, r'] for S
-    pub(crate) r_prime3: Vec<Point<F, Pcs::Polynomial>>, // alpha points [b, r'] for RS
-    pub(crate) r_prime4: Vec<Point<F, Pcs::Polynomial>>, // alpha points [b, r'] for WS
-    pub(crate) S0_data: Vec<GrandProductData<F, Pcs>>,
-    pub(crate) S_data: Vec<GrandProductData<F, Pcs>>,
-    pub(crate) RS_data: Vec<GrandProductData<F, Pcs>>,
-    pub(crate) WS_data: Vec<GrandProductData<F, Pcs>>,
-    pub(crate) E_eval2: Vec<F>,    // E_i(r3')
-    pub(crate) dim_eval: Vec<F>,   // dim_i(r3')
-    pub(crate) read_eval: Vec<F>,  // read_i(r3')
-    pub(crate) final_eval: Vec<F>, // final_i(r2')
-    // Placeholder for PCS batch proofs - handled implicitly by transcript
-    pub(crate) placeholder_proofs: PhantomData<Pcs>,
 }
 
 /// The final Lasso proof.
