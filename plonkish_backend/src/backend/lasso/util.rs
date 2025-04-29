@@ -20,10 +20,14 @@ pub(crate) fn get_index(value: usize, l: usize, c: usize) -> Result<Vec<usize>, 
         index.push(val % subtable_size);
         val /= subtable_size;
     }
-     if val != 0 {
-         // This means the original value was too large for the N=2^(l*c) range
-         return Err(Error::InvalidSnark(format!("Value {} too large for range 2^({})", value, l*c)));
-     }
+    if val != 0 {
+        // This means the original value was too large for the N=2^(l*c) range
+        return Err(Error::InvalidSnark(format!(
+            "Value {} too large for range 2^({})",
+            value,
+            l * c
+        )));
+    }
     Ok(index)
 }
 
@@ -33,14 +37,15 @@ pub(crate) fn get_poly_and_vec<F: PrimeField>(
     num_vars: usize,
 ) -> Result<(MultilinearPolynomial<F>, Vec<F>), Error> {
     if vec.len() != (1 << num_vars) {
-         return Err(Error::InvalidSnark(format!(
-             "get_poly_and_vec: Input vector length {} mismatch with num_vars {}", vec.len(), num_vars
-         )));
+        return Err(Error::InvalidSnark(format!(
+            "get_poly_and_vec: Input vector length {} mismatch with num_vars {}",
+            vec.len(),
+            num_vars
+        )));
     }
     let poly = MultilinearPolynomial::new(vec.clone()); // Clone needed as vec is consumed by new
     Ok((poly, vec))
 }
-
 
 /// The 'g' function for the simple range table [0..N-1].
 /// g(E_1, ..., E_alpha) = Sum_{j=0}^{c-1} Sum_{i=0}^{k-1} E_{j*k+i} * 2^(l*j)
@@ -57,7 +62,11 @@ pub(crate) fn g_func_simple_range<F: PrimeField>(
     let alpha = c * k;
     if E_evals.len() != alpha {
         // Consider returning a Result<F, Error> instead of panicking
-        panic!("g_func_simple_range: Incorrect number of evaluations. Expected {}, got {}.", alpha, E_evals.len());
+        panic!(
+            "g_func_simple_range: Incorrect number of evaluations. Expected {}, got {}.",
+            alpha,
+            E_evals.len()
+        );
     }
     let mut result = F::ZERO;
     let mut power_of_2_l = F::ONE;
@@ -68,7 +77,7 @@ pub(crate) fn g_func_simple_range<F: PrimeField>(
         for i in 0..k {
             let index = j * k + i;
             if index < E_evals.len() {
-                 chunk_sum += E_evals[index];
+                chunk_sum += E_evals[index];
             }
             // else: Error? Or assume missing evals are 0? Lasso paper implies alpha evals.
         }
@@ -118,7 +127,9 @@ pub(crate) fn g_poly_simple_range<F: PrimeField>(
     }
     Ok(result_poly)
     */
-    Err(Error::InvalidSnark("g_poly_simple_range is currently disabled".to_string())) // Return error instead
+    Err(Error::InvalidSnark(
+        "g_poly_simple_range is currently disabled".to_string(),
+    )) // Return error instead
 }
 
 /// Placeholder hash function H described in Lasso paper section 3.1
@@ -132,4 +143,13 @@ pub(crate) fn hash_tuple<F: PrimeField>(
     // TODO: Replace with actual hash implementation (e.g. Keccak/Poseidon)
     // Simple non-cryptographic combination for testing purposes.
     tuple.0 + (*gamma * tuple.1) + (*tau * *gamma * tuple.2) // Example: Combine elements linearly
+}
+
+pub fn log_ceil(n: usize) -> usize {
+    // return the smallest int that >= log(n)
+    (usize::BITS - (n - 1).leading_zeros()) as usize
+}
+
+pub fn hash_tuple(element: (Scalar, Scalar, Scalar), tau: Scalar, gamma: Scalar) -> Scalar {
+    Scalar(element.0 * gamma * gamma + element.1 * gamma + element.2 - tau)
 }
