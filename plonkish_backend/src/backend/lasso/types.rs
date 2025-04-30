@@ -1,5 +1,6 @@
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine};
+use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G1};
 use merlin::Transcript;
+use std::collections::HashMap;
 
 type Scalar = Fr;
 
@@ -81,4 +82,85 @@ pub struct Message5 {
     pub dim_eval_proof: Vec<MvKzGProof>,
     pub read_ts_eval_proof: Vec<MvKzGProof>,
     pub final_cts_eval_proof: Vec<MvKzGProof>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Proof {
+    pub msg_1: Message1,
+    pub msg_2: Message2,
+    pub msg_3: Message3,
+    pub msg_4: Message4,
+    pub msg_5: Message5,
+}
+
+#[derive(Clone, Debug)]
+pub enum FlattenItem {
+    Scalar(Scalar),
+    Scalars(Vec<Scalar>),
+    Point(G1Affine),
+    Points(Vec<G1Affine>),
+    Proof(MvKzgProof),
+    Proofs(Vec<MvKzgProof>),
+    SumcheckProof(Vec<Vec<Scalar>>),
+    SumcheckProofs(Vec<Vec<Vec<Scalar>>>),
+    GrandData(Vec<GrandProductData>),
+    Usize(usize),
+}
+
+#[rustfmt::skip]
+impl Proof {
+    pub fn flatten(&self) -> HashMap<String, FlattenItem> {
+        let mut proof = HashMap::new();
+
+        // msg_1
+        proof.insert("a_comm".to_string(), FlattenItem::Point(self.msg_1.a_comm.clone()));
+        proof.insert("logm".to_string(), FlattenItem::Usize(self.msg_1.logm));
+        proof.insert("dim_comm".to_string(), FlattenItem::Points(self.msg_1.dim_comm.clone()));
+
+        // msg_2
+        proof.insert("a_eval".to_string(), FlattenItem::Scalar(self.msg_2.a_eval.clone()));
+        proof.insert("a_eval_proof".to_string(), FlattenItem::Proof(self.msg_2.a_eval_proof.clone()));
+        proof.insert("E_comm".to_string(), FlattenItem::Points(self.msg_2.e_comm.clone()));
+        proof.insert("read_ts_comm".to_string(), FlattenItem::Points(self.msg_2.read_ts_comm.clone()));
+        proof.insert("final_cts_comm".to_string(), FlattenItem::Points(self.msg_2.final_cts_comm.clone()));
+
+        // msg_3
+        proof.insert("h_sumcheck_proof".to_string(), FlattenItem::SumcheckProof(self.msg_3.h_sumcheck_proof.clone()));
+        proof.insert("rz".to_string(), FlattenItem::Scalars(self.msg_3.rz.clone()));
+        proof.insert("E_eval".to_string(), FlattenItem::Scalars(self.msg_3.e_eval.clone()));
+        proof.insert("E_eval_proof".to_string(), FlattenItem::Proofs(self.msg_3.e_eval_proof.clone()));
+
+        // msg_4
+        proof.insert("S0_comm".to_string(), FlattenItem::Points(self.msg_4.s0_comm.clone()));
+        proof.insert("S_comm".to_string(), FlattenItem::Points(self.msg_4.s_comm.clone()));
+        proof.insert("RS_comm".to_string(), FlattenItem::Points(self.msg_4.rs_comm.clone()));
+        proof.insert("WS_comm".to_string(), FlattenItem::Points(self.msg_4.ws_comm.clone()));
+
+        // msg_5
+        proof.insert("S0_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.s0_sumcheck_proof.clone()));
+        proof.insert("S_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.s_sumcheck_proof.clone()));
+        proof.insert("RS_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.rs_sumcheck_proof.clone()));
+        proof.insert("WS_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.ws_sumcheck_proof.clone()));
+        proof.insert("r_prime".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime.clone()));
+        proof.insert("r_prime2".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime2.clone()));
+        proof.insert("r_prime3".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime3.clone()));
+        proof.insert("r_prime4".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime4.clone()));
+
+        proof.insert("S0_data".to_string(), FlattenItem::GrandData(self.msg_5.s0_data.clone()));
+        proof.insert("S_data".to_string(), FlattenItem::GrandData(self.msg_5.s_data.clone()));
+        proof.insert("RS_data".to_string(), FlattenItem::GrandData(self.msg_5.rs_data.clone()));
+        proof.insert("WS_data".to_string(), FlattenItem::GrandData(self.msg_5.ws_data.clone()));
+
+        proof.insert("E_eval2".to_string(), FlattenItem::Scalars(self.msg_5.e_eval2.clone()));
+        proof.insert("dim_eval".to_string(), FlattenItem::Scalars(self.msg_5.dim_eval.clone()));
+        proof.insert("read_ts_eval".to_string(), FlattenItem::Scalars(self.msg_5.read_ts_eval.clone()));
+        proof.insert("final_cts_eval".to_string(), FlattenItem::Scalars(self.msg_5.final_cts_eval.clone()));
+
+        proof.insert("E_eval2_proof".to_string(), FlattenItem::Proofs(self.msg_5.e_eval2_proof.clone()));
+        proof.insert("dim_eval_proof".to_string(), FlattenItem::Proofs(self.msg_5.dim_eval_proof.clone()));
+        proof.insert("read_ts_eval_proof".to_string(), FlattenItem::Proofs(self.msg_5.read_ts_eval_proof.clone()));
+        proof.insert("final_cts_eval_proof".to_string(), FlattenItem::Proofs(self.msg_5.final_cts_eval_proof.clone()));
+
+        return proof
+    }
 }
