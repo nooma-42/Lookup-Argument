@@ -1,6 +1,4 @@
-use crate::poly::Polynomial;
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine};
-use pcs::Multilinear;
+use halo2_curves::bn256::Fr;
 use std::ops::{Add, Mul};
 
 type Scalar = Fr;
@@ -29,11 +27,10 @@ impl SOSTable {
         }
     }
 
+    // T could be a Scalar
     pub fn g_func<T>(&self, r: &[T]) -> T
     where
         T: Clone + Add<Output = T> + Mul<Output = T> + From<i64>,
-        T: Scalar,
-        T: Polynomial,
     {
         /*
         The g function.
