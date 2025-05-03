@@ -1,10 +1,8 @@
-use generic_array::typenum::True;
 use halo2_curves::bn256::Fr;
 use std::cmp;
 use std::collections::HashSet;
 use std::fmt;
-use std::ops::Mul;
-use std::sync::Arc;
+use std::ops::{Add, Mul};
 
 type Scalar = Fr;
 
@@ -21,7 +19,7 @@ pub struct AffineProduct {
     pub terms: Vec<AffineTerm>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct AffinePolynomial {
     pub terms: Vec<AffineProduct>,
     pub constant: Scalar,
@@ -76,15 +74,17 @@ impl Mul<Scalar> for AffineTerm {
     }
 }
 
+#[rustfmt::skip]
 impl fmt::Display for AffineTerm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({} * x_{} + {})", self.coeff, self.x_i, self.constant)
+        write!(f, "({:?} * x_{} + {:?})", self.coeff, self.x_i, self.constant)
     }
 }
 
 // γ * (term₁ * term₂ * ...) → γ * ((α₁ * x_i₁ + β₁) * (α₂ * x_i₂ + β₂) * ...)
 impl AffineProduct {
-    pub fn new(coeff: Scalar, terms: Vec<AffineTerm>) -> Self {
+    pub fn new(coeff: Scalar, terms: &Vec<AffineTerm>) -> Self {
+        let terms = terms.clone();
         Self { coeff, terms }
     }
 
@@ -114,7 +114,7 @@ impl AffineProduct {
         if new_terms.is_empty() {
             Ok(res)
         } else {
-            Err(AffineProduct::new(res, new_terms))
+            Err(AffineProduct::new(res, &new_terms))
         }
     }
 
@@ -130,19 +130,19 @@ impl AffineProduct {
         res
     }
     pub fn get_expansion(&self) -> UnivariateExpansion {
-        let mut res = self.terms[0].convert() * self.coeff;
+        let mut res = self.terms[0].convert().multiply_scalar(self.coeff);
         for t in self.terms.iter().skip(1) {
-            res = res * t.clone();
+            res = res.multiply_term(&t);
         }
         res
     }
 
     pub fn get_multi_expansion(&self, v: usize) -> MultivariateExpansion {
-        let mut term = [Scalar::zero(); v + 1];
-        tern[0] = self.coeff.clone();
+        let mut term = vec![Scalar::zero(); v + 1];
+        term[0] = self.coeff.clone();
         let mut mexp = MultivariateExpansion::new(vec![term], v);
         for t in &self.terms {
-            mexp = mexp * t.clone();
+            mexp = mexp.multiply_term(&t)
         }
         mexp
     }
@@ -153,7 +153,7 @@ impl Mul for AffineProduct {
     fn mul(self, rhs: Self) -> Self {
         let mut combined_terms = self.terms.clone();
         combined_terms.extend(rhs.terms.clone());
-        AffineProduct::new(self.coeff * rhs.coeff, combined_terms)
+        AffineProduct::new(self.coeff * rhs.coeff, &combined_terms)
     }
 }
 
@@ -165,7 +165,7 @@ impl fmt::Display for AffineProduct {
             .map(|t| format!("{}", t))
             .collect::<Vec<_>>()
             .join(" * ");
-        write!(f, "{} * ({})", self.coeff, terms_str)
+        write!(f, "{:?} * ({})", self.coeff, terms_str)
     }
 }
 
@@ -202,7 +202,7 @@ impl AffinePolynomial {
             if reduced_terms.is_empty() {
                 new_const += coeff;
             } else {
-                new_terms.push(AffineProduct::new(coeff, reduced_terms));
+                new_terms.push(AffineProduct::new(coeff, &reduced_terms));
             }
         }
         AffinePolynomial::new(new_terms, new_const).apply_all()
@@ -233,9 +233,10 @@ impl AffinePolynomial {
         let mut new_terms = vec![];
         let mut new_const = self.constant;
         for t in &self.terms {
-            match t.apply() {
-                TermOrScalar::Scalar(c) => new_const += c,
-                TermOrScalar::AffineProduct(m) => new_terms.push(m),
+            let sub_res = t.apply();
+            match sub_res {
+                Ok(res) => new_const += res,
+                Err(new_term) => new_terms.push(new_term),
             }
         }
         Self::new(new_terms, new_const)
@@ -251,7 +252,7 @@ impl AffinePolynomial {
     pub fn get_highest_degree(&self) -> usize {
         let mut max_degree = 0;
         for term in &self.terms {
-            max_degree = cmp(term.terms.len(), max_degree);
+            max_degree = cmp::max(term.terms.len(), max_degree);
         }
         max_degree
     }
@@ -260,7 +261,7 @@ impl AffinePolynomial {
         let mut max_index = 0;
         for mono in &self.terms {
             for term in &mono.terms {
-                max_index = cmp(term.x_i, max_index);
+                max_index = cmp::max(term.x_i, max_index);
             }
         }
         max_index
@@ -275,11 +276,11 @@ impl AffinePolynomial {
     }
 
     pub fn get_multi_expansion(&self, v: usize) -> MultivariateExpansion {
-        let mut term = [Scalar::zero(); v + 1];
-        tern[0] = self.coeff.clone();
+        let mut term = vec![Scalar::zero(); v + 1];
+        term[0] = self.constant.clone();
         let mut mexp = MultivariateExpansion::new(vec![term], v);
         for mono in &self.terms {
-            mexp = mexp * mono.get_multi_expansion(v);
+            mexp = mexp + mono.get_multi_expansion(v);
         }
         mexp
     }
@@ -293,7 +294,7 @@ impl AffinePolynomial {
             let mut terms = mono.terms.clone();
             let mut coeff = mono.coeff;
 
-            while true {
+            loop {
                 let mut new_terms = Vec::new();
                 let mut this_coeff = coeff;
                 let mut next_coeff = coeff;
@@ -318,7 +319,7 @@ impl AffinePolynomial {
                     new_const += this_coeff;
                     break;
                 } else {
-                    new_terms_poly.push(AffineProduct::new(this_coeff, new_terms));
+                    new_terms_poly.push(AffineProduct::new(this_coeff, &new_terms));
                     terms = new_terms;
                     coeff = next_coeff;
                 }
@@ -373,7 +374,7 @@ impl AffinePolynomial {
 impl fmt::Display for AffinePolynomial {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let terms_str: Vec<String> = self.terms.iter().map(|t| t.to_string()).collect();
-        write!(f, "{} + {}", terms_str.join(" + "), self.constant)
+        write!(f, "{} + {:?}", terms_str.join(" + "), self.constant)
     }
 }
 
@@ -394,16 +395,78 @@ impl PartialEq for AffinePolynomial {
     }
 }
 
+/// Implementation of UnivariateExpansion
+/// ToDo: need testing
 impl UnivariateExpansion {
     pub fn new(coeffs: Vec<Scalar>, degree: usize) -> Self {
         Self { coeffs, degree }
     }
-    // ToDo: Implement the following parts of this Struct
+
+    pub fn multiply_scalar(&self, x: Scalar) -> Self {
+        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
+        coeffs.iter_mut().enumerate().for_each(|(i, c)| {
+            *c = self.coeffs[i] * x;
+        });
+
+        Self::new(coeffs, self.degree)
+    }
+    pub fn multiply_term(&self, term: &AffineTerm) -> Self {
+        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
+        for i in 0..=self.degree {
+            coeffs[i] = self.coeffs[i] * term.coeff;
+        }
+        coeffs[term.x_i] += term.constant;
+        Self::new(coeffs, self.degree)
+    }
+}
+impl Add for UnivariateExpansion {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let max_degree = cmp::max(self.degree, rhs.degree);
+        let mut coeffs = vec![Scalar::zero(); max_degree + 1];
+        for i in 0..=max_degree {
+            coeffs[i] += self.coeffs.get(i).unwrap_or(&Scalar::zero())
+                + rhs.coeffs.get(i).unwrap_or(&Scalar::zero());
+        }
+        Self::new(coeffs, max_degree)
+    }
 }
 
+/// Implementation of MultivariateExpansion
+/// ToDo: need testing, since it is a different implementation from pylookup
 impl MultivariateExpansion {
     pub fn new(terms: Vec<Vec<Scalar>>, v: usize) -> Self {
         Self { terms, v }
     }
-    // ToDo: Implement the following parts of this Struct
+    pub fn multiply_term(&self, term: &AffineTerm) -> Self {
+        let mut terms = vec![vec![Scalar::zero(); self.v + 1]; self.terms.len()];
+        for i in 0..self.terms.len() {
+            for j in 0..=self.v {
+                terms[i][j] = self.terms[i][j] * term.coeff;
+            }
+            terms[i][term.x_i] += term.constant;
+        }
+        Self::new(terms, self.v)
+    }
+}
+impl Add for MultivariateExpansion {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        assert_eq!(self.v, rhs.v);
+        let max_terms = cmp::max(self.terms.len(), rhs.terms.len());
+        let mut terms = vec![vec![Scalar::zero(); self.v + 1]; max_terms];
+        for i in 0..max_terms {
+            for j in 0..=self.v {
+                terms[i][j] += self
+                    .terms
+                    .get(i)
+                    .unwrap_or(&vec![Scalar::zero(); self.v + 1])[j]
+                    + rhs
+                        .terms
+                        .get(i)
+                        .unwrap_or(&vec![Scalar::zero(); self.v + 1])[j];
+            }
+        }
+        Self::new(terms, self.v)
+    }
 }
