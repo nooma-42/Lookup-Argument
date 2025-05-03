@@ -16,6 +16,7 @@ use crate::{
 use halo2_curves::ff::WithSmallOrderMulGroup;
 use std::{fmt::Debug, hash::Hash, marker::PhantomData}; // Removed HashMap, Instant
 
+pub mod affine_prod;
 pub mod preprocessor;
 pub mod prover;
 pub mod sostable;
