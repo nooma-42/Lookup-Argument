@@ -6,15 +6,15 @@ use std::ops::{Add, Mul};
 type Scalar = Fr;
 
 pub struct SOSTable {
-    l: usize,
-    c: usize,
-    k: usize,
-    alpha: usize,
-    tables: Vec<Vec<i64>>,
+    pub(crate) l: usize,
+    pub(crate) c: usize,
+    pub(crate) k: usize,
+    pub(crate) alpha: usize,
+    pub(crate) tables: Vec<Vec<i64>>,
 }
 
 pub struct Params {
-    table: SOSTable,
+    pub(crate) table: SOSTable,
 }
 
 impl SOSTable {
