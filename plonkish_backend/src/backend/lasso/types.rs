@@ -1,5 +1,4 @@
-use halo2_curves::bn256::{pairing, Bn256, Fr, G1Affine, G1};
-use merlin::Transcript;
+use halo2_curves::bn256::{Fr, G1Affine};
 use std::collections::HashMap;
 
 type Scalar = Fr;
@@ -27,7 +26,7 @@ pub struct GrandProductData {
 #[derive(Clone, Debug)]
 pub struct Message1 {
     pub a_comm: G1Affine,
-    pub logm: u64,
+    pub logm: usize,
     pub dim_comm: Vec<G1Affine>,
 }
 
@@ -35,7 +34,7 @@ pub struct Message1 {
 #[derive(Clone, Debug)]
 pub struct Message2 {
     pub a_eval: Scalar,
-    pub a_eval_proof: MvKzGProof,
+    pub a_eval_proof: MvKzgProof,
     pub e_comm: Vec<G1Affine>,
     pub read_ts_comm: Vec<G1Affine>,
     pub final_cts_comm: Vec<G1Affine>,
@@ -47,7 +46,7 @@ pub struct Message3 {
     pub h_sumcheck_proof: Vec<Vec<Scalar>>,
     pub rz: Vec<Scalar>,
     pub e_eval: Vec<Scalar>,
-    pub e_eval_proof: Vec<MvKzGProof>,
+    pub e_eval_proof: Vec<MvKzgProof>,
 }
 
 /// Lasso proof message round 4
@@ -78,10 +77,10 @@ pub struct Message5 {
     pub dim_eval: Vec<Scalar>,
     pub read_ts_eval: Vec<Scalar>,
     pub final_cts_eval: Vec<Scalar>,
-    pub e_eval2_proof: Vec<MvKzGProof>,
-    pub dim_eval_proof: Vec<MvKzGProof>,
-    pub read_ts_eval_proof: Vec<MvKzGProof>,
-    pub final_cts_eval_proof: Vec<MvKzGProof>,
+    pub e_eval2_proof: Vec<MvKzgProof>,
+    pub dim_eval_proof: Vec<MvKzgProof>,
+    pub read_ts_eval_proof: Vec<MvKzgProof>,
+    pub final_cts_eval_proof: Vec<MvKzgProof>,
 }
 
 #[derive(Clone, Debug)]
@@ -141,10 +140,10 @@ impl Proof {
         proof.insert("S_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.s_sumcheck_proof.clone()));
         proof.insert("RS_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.rs_sumcheck_proof.clone()));
         proof.insert("WS_sumcheck_proof".to_string(), FlattenItem::SumcheckProofs(self.msg_5.ws_sumcheck_proof.clone()));
-        proof.insert("r_prime".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime.clone()));
-        proof.insert("r_prime2".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime2.clone()));
-        proof.insert("r_prime3".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime3.clone()));
-        proof.insert("r_prime4".to_string(), FlattenItem::SumcheckProofs(self.msg_5.r_prime4.clone()));
+        proof.insert("r_prime".to_string(), FlattenItem::SumcheckProof(self.msg_5.r_prime.clone()));
+        proof.insert("r_prime2".to_string(), FlattenItem::SumcheckProof(self.msg_5.r_prime2.clone()));
+        proof.insert("r_prime3".to_string(), FlattenItem::SumcheckProof(self.msg_5.r_prime3.clone()));
+        proof.insert("r_prime4".to_string(), FlattenItem::SumcheckProof(self.msg_5.r_prime4.clone()));
 
         proof.insert("S0_data".to_string(), FlattenItem::GrandData(self.msg_5.s0_data.clone()));
         proof.insert("S_data".to_string(), FlattenItem::GrandData(self.msg_5.s_data.clone()));
