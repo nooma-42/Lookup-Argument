@@ -88,10 +88,6 @@ impl AffineProduct {
         Self { coeff, terms }
     }
 
-    pub fn multiply_scalar(&mut self, n: Scalar) {
-        self.coeff *= n;
-    }
-
     pub fn apply(&self) -> Result<Scalar, Self> {
         let mut res = self.coeff;
         let mut new_terms = vec![];
@@ -130,9 +126,9 @@ impl AffineProduct {
         res
     }
     pub fn get_expansion(&self) -> UnivariateExpansion {
-        let mut res = self.terms[0].convert().multiply_scalar(self.coeff);
+        let mut res = self.terms[0].convert() * self.coeff;
         for t in self.terms.iter().skip(1) {
-            res = res.multiply_term(&t);
+            res = res * t.clone();
         }
         res
     }
@@ -142,7 +138,7 @@ impl AffineProduct {
         term[0] = self.coeff.clone();
         let mut mexp = MultivariateExpansion::new(vec![term], v);
         for t in &self.terms {
-            mexp = mexp.multiply_term(&t)
+            mexp = mexp * t.clone();
         }
         mexp
     }
@@ -154,6 +150,16 @@ impl Mul for AffineProduct {
         let mut combined_terms = self.terms.clone();
         combined_terms.extend(rhs.terms.clone());
         AffineProduct::new(self.coeff * rhs.coeff, &combined_terms)
+    }
+}
+impl Mul<Scalar> for AffineProduct {
+    type Output = Self;
+    fn mul(self, rhs: Scalar) -> Self {
+        let mut terms = self.terms.clone();
+        for t in &mut terms {
+            t.coeff *= rhs;
+        }
+        AffineProduct::new(self.coeff * rhs, &terms)
     }
 }
 
@@ -173,15 +179,6 @@ impl fmt::Display for AffineProduct {
 impl AffinePolynomial {
     pub fn new(terms: Vec<AffineProduct>, constant: Scalar) -> Self {
         Self { terms, constant }
-    }
-    pub fn add_scalar(&mut self, n: Scalar) {
-        self.constant += n;
-    }
-    pub fn multiply_scalar(&mut self, n: Scalar) {
-        for t in &mut self.terms {
-            t.multiply_scalar(n);
-        }
-        self.constant *= n;
     }
 
     pub fn eval_i(&self, x_i: Scalar, i: usize) -> Self {
@@ -412,6 +409,13 @@ impl Add for AffinePolynomial {
     }
 }
 
+impl Add<Scalar> for AffinePolynomial {
+    type Output = Self;
+    fn add(self, rhs: Scalar) -> Self {
+        AffinePolynomial::new(self.terms, self.constant + rhs)
+    }
+}
+
 impl Mul for AffinePolynomial {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
@@ -434,29 +438,22 @@ impl Mul for AffinePolynomial {
         AffinePolynomial::new(terms, self.constant * rhs.constant)
     }
 }
+impl Mul<Scalar> for AffinePolynomial {
+    type Output = Self;
+    fn mul(self, rhs: Scalar) -> Self {
+        let mut terms = self.terms.clone();
+        for t in &mut terms {
+            t.coeff *= rhs;
+        }
+        AffinePolynomial::new(terms, self.constant * rhs)
+    }
+}
 
 /// Implementation of UnivariateExpansion
 /// ToDo: need testing
 impl UnivariateExpansion {
     pub fn new(coeffs: Vec<Scalar>, degree: usize) -> Self {
         Self { coeffs, degree }
-    }
-
-    pub fn multiply_scalar(&self, x: Scalar) -> Self {
-        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
-        coeffs.iter_mut().enumerate().for_each(|(i, c)| {
-            *c = self.coeffs[i] * x;
-        });
-
-        Self::new(coeffs, self.degree)
-    }
-    pub fn multiply_term(&self, term: &AffineTerm) -> Self {
-        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
-        for i in 0..=self.degree {
-            coeffs[i] = self.coeffs[i] * term.coeff;
-        }
-        coeffs[term.x_i] += term.constant;
-        Self::new(coeffs, self.degree)
     }
 }
 impl Add for UnivariateExpansion {
@@ -471,22 +468,33 @@ impl Add for UnivariateExpansion {
         Self::new(coeffs, max_degree)
     }
 }
+impl Mul<Scalar> for UnivariateExpansion {
+    type Output = Self;
+    fn mul(self, rhs: Scalar) -> Self {
+        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
+        for i in 0..=self.degree {
+            coeffs[i] = self.coeffs[i] * rhs;
+        }
+        Self::new(coeffs, self.degree)
+    }
+}
+impl Mul<AffineTerm> for UnivariateExpansion {
+    type Output = Self;
+    fn mul(self, rhs: AffineTerm) -> Self {
+        let mut coeffs = vec![Scalar::zero(); self.degree + 1];
+        for i in 0..=self.degree {
+            coeffs[i] = self.coeffs[i] * rhs.coeff;
+        }
+        coeffs[rhs.x_i] += rhs.constant;
+        Self::new(coeffs, self.degree)
+    }
+}
 
 /// Implementation of MultivariateExpansion
 /// ToDo: need testing, since it is a different implementation from pylookup
 impl MultivariateExpansion {
     pub fn new(terms: Vec<Vec<Scalar>>, v: usize) -> Self {
         Self { terms, v }
-    }
-    pub fn multiply_term(&self, term: &AffineTerm) -> Self {
-        let mut terms = vec![vec![Scalar::zero(); self.v + 1]; self.terms.len()];
-        for i in 0..self.terms.len() {
-            for j in 0..=self.v {
-                terms[i][j] = self.terms[i][j] * term.coeff;
-            }
-            terms[i][term.x_i] += term.constant;
-        }
-        Self::new(terms, self.v)
     }
 }
 impl Add for MultivariateExpansion {
@@ -506,6 +514,20 @@ impl Add for MultivariateExpansion {
                         .get(i)
                         .unwrap_or(&vec![Scalar::zero(); self.v + 1])[j];
             }
+        }
+        Self::new(terms, self.v)
+    }
+}
+
+impl Mul<AffineTerm> for MultivariateExpansion {
+    type Output = Self;
+    fn mul(self, rhs: AffineTerm) -> Self {
+        let mut terms = vec![vec![Scalar::zero(); self.v + 1]; self.terms.len()];
+        for i in 0..self.terms.len() {
+            for j in 0..=self.v {
+                terms[i][j] = self.terms[i][j] * rhs.coeff;
+            }
+            terms[i][rhs.x_i] += rhs.constant;
         }
         Self::new(terms, self.v)
     }
