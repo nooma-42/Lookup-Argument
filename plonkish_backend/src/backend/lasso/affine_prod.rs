@@ -88,7 +88,7 @@ impl AffineProduct {
         Self { coeff, terms }
     }
 
-    pub fn mult(&mut self, n: Scalar) {
+    pub fn multiply_scalar(&mut self, n: Scalar) {
         self.coeff *= n;
     }
 
@@ -173,6 +173,15 @@ impl fmt::Display for AffineProduct {
 impl AffinePolynomial {
     pub fn new(terms: Vec<AffineProduct>, constant: Scalar) -> Self {
         Self { terms, constant }
+    }
+    pub fn add_scalar(&mut self, n: Scalar) {
+        self.constant += n;
+    }
+    pub fn multiply_scalar(&mut self, n: Scalar) {
+        for t in &mut self.terms {
+            t.multiply_scalar(n);
+        }
+        self.constant *= n;
     }
 
     pub fn eval_i(&self, x_i: Scalar, i: usize) -> Self {
@@ -392,6 +401,37 @@ impl PartialEq for AffinePolynomial {
         }
 
         self.constant == other.constant
+    }
+}
+impl Add for AffinePolynomial {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let mut terms = self.terms.clone();
+        terms.extend(rhs.terms.clone());
+        AffinePolynomial::new(terms, self.constant + rhs.constant)
+    }
+}
+
+impl Mul for AffinePolynomial {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        let mut terms = vec![];
+        for t1 in &self.terms {
+            for t2 in &rhs.terms {
+                terms.push(t1.clone() * t2.clone());
+            }
+        }
+        for t in &self.terms {
+            if rhs.constant != Scalar::zero() {
+                terms.push(AffineProduct::new(t.coeff * rhs.constant, &t.terms));
+            }
+        }
+        for b in &rhs.terms {
+            if self.constant != Scalar::zero() {
+                terms.push(AffineProduct::new(b.coeff * self.constant, &b.terms));
+            }
+        }
+        AffinePolynomial::new(terms, self.constant * rhs.constant)
     }
 }
 
