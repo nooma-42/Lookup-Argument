@@ -13,12 +13,13 @@ use rand::RngCore;
 use std::{collections::BTreeSet, fmt::Debug};
 
 pub mod baloo;
+pub mod caulk;
 pub mod cq;
 pub mod hyperplonk;
-pub mod plookup;
+pub mod lasso;
 pub mod logupgkr;
+pub mod plookup;
 pub mod unihyperplonk;
-pub mod caulk;
 
 pub trait PlonkishBackend<F: Field>: Clone + Debug {
     type Pcs: PolynomialCommitmentScheme<F>;
