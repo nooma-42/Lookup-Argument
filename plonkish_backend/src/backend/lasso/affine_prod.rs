@@ -1,9 +1,9 @@
+use crate::poly::multilinear::MultilinearPolynomial;
 use halo2_curves::bn256::Fr;
 use std::cmp;
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::{Add, Mul};
-
 type Scalar = Fr;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -375,6 +375,29 @@ impl AffinePolynomial {
         }
         variables.len()
     }
+    pub fn to_mle(&self) -> MultilinearPolynomial<Scalar> {
+        let num_vars = self.num_var();
+        let domain_size = 1 << num_vars;
+        let mut evals = Vec::with_capacity(domain_size);
+
+        // Loop over all binary vectors of length `num_vars`
+        for i in 0..domain_size {
+            let input: Vec<Scalar> = (0..num_vars)
+                .map(|j| {
+                    if (i >> j) & 1 == 1 {
+                        Scalar::one()
+                    } else {
+                        Scalar::zero()
+                    }
+                })
+                .collect();
+
+            let val = self.evaluate(&input);
+            evals.push(val);
+        }
+
+        MultilinearPolynomial::new(evals)
+    }
 }
 
 impl fmt::Display for AffinePolynomial {
@@ -448,7 +471,6 @@ impl Mul<Scalar> for AffinePolynomial {
         AffinePolynomial::new(terms, self.constant * rhs)
     }
 }
-
 /// Implementation of UnivariateExpansion
 /// ToDo: need testing
 impl UnivariateExpansion {
