@@ -1,5 +1,5 @@
+use crate::poly::multilinear::MultilinearPolynomial;
 use halo2_curves::bn256::Fr;
-use std::ops::{Add, Mul};
 
 type Scalar = Fr;
 
@@ -8,7 +8,7 @@ pub struct SOSTable {
     pub(crate) c: usize,
     pub(crate) k: usize,
     pub(crate) alpha: usize,
-    pub(crate) tables: Vec<Vec<i64>>,
+    pub(crate) tables: Vec<Vec<u64>>,
 }
 
 pub struct Params {
@@ -16,7 +16,7 @@ pub struct Params {
 }
 
 impl SOSTable {
-    pub fn new(l: usize, c: usize, k: usize, tables: Vec<Vec<i64>>) -> Self {
+    pub fn new(l: usize, c: usize, k: usize, tables: Vec<Vec<u64>>) -> Self {
         assert_eq!(tables.len(), k * c);
         Self {
             l,
@@ -28,32 +28,28 @@ impl SOSTable {
     }
 
     // T could be a Scalar
-    pub fn g_func<T>(&self, r: &[T]) -> T
-    where
-        T: Clone + Add<Output = T> + Mul<Output = T> + From<i64>,
-    {
+    pub fn g_func(&self, r: &[MultilinearPolynomial<Scalar>]) -> MultilinearPolynomial<Scalar> {
         /*
         The g function.
-            - r could be a list of Scalar or poly.Polynomial or mle_poly.polynomial.
-            - ret would be the same type as r_1.
         Here we have g(r_1, ..., r_c) = 1 + r_1 + r_2 * 2**l + ... + r_c * 2**(l*(c-1))
         that represent the table [1, 2, ..., 2**(l*c)].
         [Need to override this function.]
          */
+
+        // doing fast pow for polynomial
         assert_eq!(r.len(), self.alpha);
 
-        let mut ret = T::from(1);
-        let mut mul = T::from(1);
-        let base = T::from(2i64.pow(self.l as u32));
-
-        for ri in r {
-            ret = ri.clone() * mul.clone() + ret;
-            mul = mul * base.clone();
+        let mut ret = MultilinearPolynomial::new(vec![Scalar::one()]);
+        let mut pow = Scalar::from(1 << self.l); // 2^l as Scalar
+        let base = Scalar::from(1 << self.l); // 2^l as Scalar
+        for poly in r.iter() {
+            ret = &(poly * pow) + &ret;
+            pow = &pow * &base;
         }
-        return ret;
+        ret
     }
 
-    pub fn get_index(&self, value: i64) -> Vec<i64> {
+    pub fn get_index(&self, value: u64) -> Vec<u64> {
         /*
         Return the index of each subtable for any element in the table.
         With the SOS structure, we should be able to get the indexes
