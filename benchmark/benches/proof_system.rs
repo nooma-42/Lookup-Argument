@@ -1,7 +1,7 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup};
+use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup, lasso};
 use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
-use plonkish_backend::pcs::univariate::UnivariateKzg;
+use plonkish_backend::pcs::{univariate::UnivariateKzg, multilinear::MultilinearKzg};
 use plonkish_backend::util::arithmetic::PrimeField;
 use plonkish_backend::util::transcript::Keccak256Transcript;
 use regex::Regex;
@@ -673,11 +673,12 @@ enum System {
     LogupGKR,
     Plookup,
     Caulk,
+    Lasso,
 }
 
 impl System {
-    fn all() -> Vec<System> {
-        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk]
+    fn all() -> Vec<Self> {
+        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk, System::Lasso]
     }
 
     fn output_path(&self) -> String {
@@ -699,6 +700,7 @@ impl System {
             System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
             System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
             System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
+            System::Lasso => bench_lasso(k, n_to_n_ratio, verbose, debug),
         }
     }
 }
@@ -711,6 +713,7 @@ impl Display for System {
             System::LogupGKR => write!(f, "LogupGKR"),
             System::Plookup => write!(f, "Plookup"),
             System::Caulk => write!(f, "Caulk"),
+            System::Lasso => write!(f, "Lasso"),
         }
     }
 }
@@ -718,7 +721,7 @@ impl Display for System {
 fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) {
     let (systems, k_range, n_to_n_ratio, verbose, output_format, debug) =
         args().chain(Some("".to_string())).tuple_windows().fold(
-            (Vec::new(), 20..26, 2, false, OutputFormat::Table, false), // Default N:n ratio is 2
+            (Vec::new(), 20..26, 2, false, OutputFormat::Table, false),
             |(mut systems, mut k_range, mut n_to_n_ratio, mut verbose, mut output_format, mut debug),
              (key, value)| {
                 match key.as_str() {
@@ -734,7 +737,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) 
                         "Plookup" => systems.push(System::Plookup),
                         "caulk" => systems.push(System::Caulk),
                         "Caulk" => systems.push(System::Caulk),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk}}"),
+                        "lasso" => systems.push(System::Lasso),
+                        "Lasso" => systems.push(System::Lasso),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk, lasso}}"),
                     },
 
                     "--k" => {
@@ -786,4 +791,11 @@ fn create_output(systems: &[System]) {
     for system in systems {
         File::create(system.output_path()).unwrap();
     }
+}
+
+// Add the benchmark function for Lasso
+fn bench_lasso(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Calculate table and lookup sizes based on k and ratio
+
+    unimplemented!()
 }
