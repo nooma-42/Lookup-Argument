@@ -176,12 +176,14 @@ impl<
         let memory_checking = Self::prepare_memory_checking(table);
         memory_checking
             .iter()
-            .map(|memory_checking| {
+            .enumerate()
+            .map(|(index, memory_checking)| {
+                let instance_points_offset = points_offset + 2 + 2 * index;
                 memory_checking.verify(
                     table.chunk_bits().len(),
                     num_reads,
                     polys_offset,
-                    points_offset,
+                    instance_points_offset,
                     &gamma,
                     &tau,
                     lookup_opening_points,

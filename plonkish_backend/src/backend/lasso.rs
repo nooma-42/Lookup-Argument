@@ -220,8 +220,18 @@ fn run_standalone_lasso_range_check() {
     if num_lookups == 0 {
         println!("No values to check. Skipping.");
     }
-    let num_vars_for_lookups = (num_lookups as f64).log2().ceil() as usize; // num_vars for MLEs
-    let padded_lookup_size = 1 << num_vars_for_lookups;
+
+    let table: Box<dyn DecomposableTable<F>> = Box::new(RangeTable::<F, NUM_BITS_FOR_RANGE_CHECK, LIMB_BITS_FOR_RANGE_CHECK>::new());
+    
+    // This will resolve batch open failure issue
+    let chunk_bits = table.chunk_bits();
+    let original_num_vars_for_lookups = (num_lookups as f64).log2().ceil() as usize;
+    let unified_num_vars = *chunk_bits.iter().max().unwrap().max(&original_num_vars_for_lookups);
+    
+    println!("Original num_vars_for_lookups: {}, chunk_bits: {:?}, unified_num_vars: {}", 
+             original_num_vars_for_lookups, chunk_bits, unified_num_vars);
+    
+    let padded_lookup_size = 1 << unified_num_vars;
 
     let mut padded_values = values_to_check.clone();
     padded_values.resize(padded_lookup_size, *values_to_check.last().unwrap_or(&F::ZERO)); // Pad
@@ -233,9 +243,6 @@ fn run_standalone_lasso_range_check() {
     // LassoProver::commit will construct the actual lookup_output_poly (T_eval) based on E_i polys.
     // We need to provide an initial "claimed" output, which for range check, is the input itself.
     let claimed_lookup_output_poly = MultilinearPolynomial::new(padded_values.clone());
-
-
-    let table: Box<dyn DecomposableTable<F>> = Box::new(RangeTable::<F, NUM_BITS_FOR_RANGE_CHECK, LIMB_BITS_FOR_RANGE_CHECK>::new());
     let subtable_polys_mle: Vec<MultilinearPolynomial<F>> = table.subtable_polys();
     let subtable_polys_mle_refs: Vec<&MultilinearPolynomial<F>> = subtable_polys_mle.iter().collect();
 
@@ -245,17 +252,25 @@ fn run_standalone_lasso_range_check() {
     // lookup_index/output polys, E_polys are size `padded_lookup_size`.
     // Dims, ReadTs, FinalCts polys depend on chunk_bits and num_vars_for_lookups.
     // Subtable_polys are size `1 << LIMB_BITS` or `1 << remainder_bits`.
+    // Memory checking GKR generates challenge points with variables:
+    // - For reads/writes: num_vars = log2(num_lookups) 
+    // - For init/final: num_vars = LIMB_BITS_FOR_RANGE_CHECK
     let max_limb_poly_size = 1 << LIMB_BITS_FOR_RANGE_CHECK;
     let remainder_bits = NUM_BITS_FOR_RANGE_CHECK % LIMB_BITS_FOR_RANGE_CHECK;
     let max_rem_poly_size = if remainder_bits > 0 { 1 << remainder_bits } else { 0 };
+    
+    // Consider GKR challenge points: need to support both unified_num_vars and LIMB_BITS_FOR_RANGE_CHECK variables
+    let max_gkr_point_size = (1 << unified_num_vars).max(1 << LIMB_BITS_FOR_RANGE_CHECK);
+    
     let max_poly_degree_for_pcs = padded_lookup_size
         .max(max_limb_poly_size)
-        .max(max_rem_poly_size);
+        .max(max_rem_poly_size)
+        .max(max_gkr_point_size);
 
     // Estimate batch size: output (1) + dims (N_chunks) + read_ts (N_chunks) + final_cts (N_chunks) + e_polys (N_memories)
     let num_chunks = table.chunk_bits().len();
     let num_memories = table.num_memories();
-    let estimated_batch_size = 1 + num_chunks * 3 + num_memories + 1; // +1 for lookup_index_poly if committed separately
+    let estimated_batch_size = 1 + num_chunks * 3 + num_memories;
 
     let pcs_param = Pcs::setup(max_poly_degree_for_pcs, estimated_batch_size, &mut rng).unwrap();
     let (pcs_pp, pcs_vp) = Pcs::trim(&pcs_param, max_poly_degree_for_pcs, estimated_batch_size).unwrap();
@@ -291,6 +306,9 @@ fn run_standalone_lasso_range_check() {
     let prover_e_polys_struct = &committed_lasso_polys_nested_structs[4];
     let e_poly_refs: Vec<&Poly<F>> = prover_e_polys_struct.iter().collect();
 
+    // Sentinel after LassoProver::commit
+    let sentinel_p1: F = transcript_p.squeeze_challenge();
+    println!("Prover Sentinel 1: {:?}", sentinel_p1);
 
     // 3. Prover: Squeeze challenges for sumcheck and memory checking
     let beta_challenge: F = transcript_p.squeeze_challenge(); // For memory checking (as tau)
@@ -300,6 +318,10 @@ fn run_standalone_lasso_range_check() {
     // This point is typically derived from verifier's challenges over the field.
     let r_sumcheck_q_challenges: Vec<F> = transcript_p.squeeze_challenges(prover_lookup_output_poly_struct.num_vars());
     println!("Prover: Challenges squeezed.");
+
+    // Sentinel after squeezing beta, gamma, r_sumcheck
+    let sentinel_p2: F = transcript_p.squeeze_challenge();
+    println!("Prover Sentinel 2: {:?}", sentinel_p2);
 
     let mut prover_lookup_opening_points: Vec<Vec<F>> = Vec::new();
     let mut prover_lookup_opening_evals: Vec<Evaluation<F>> = Vec::new();
@@ -316,7 +338,7 @@ fn run_standalone_lasso_range_check() {
     // 4. Prover: Sum-check (Surge)
     // `points_offset` for `prove_sum_check` refers to the index of `r_sumcheck_q_challenges` in `prover_lookup_opening_points`
     // and `polys_offset` refers to the commitment index of `prover_lookup_output_poly_struct`.
-    LassoProver::<F, Pcs>::prove_sum_check(
+    let sumcheck_result = LassoProver::<F, Pcs>::prove_sum_check(
         output_poly_commitment_idx, // This is the `polys_offset` for the output polynomial T_final
                                     // It is also used as `points_offset` for its evaluation at `r_sumcheck_q_challenges`
         &mut prover_lookup_opening_points,
@@ -328,7 +350,15 @@ fn run_standalone_lasso_range_check() {
         prover_lookup_output_poly_struct.num_vars(),
         &mut transcript_p,
     );
+    if sumcheck_result.is_err() {
+        println!("Prover: Sum-check prove failed.");
+        return;
+    }
     println!("Prover: Sum-check prove done.");
+
+    // Sentinel after LassoProver::prove_sum_check
+    let sentinel_p3: F = transcript_p.squeeze_challenge();
+    println!("Prover Sentinel 3: {:?}", sentinel_p3);
 
     // 5. Prover: Memory Checking
     // `points_offset` for memory checking evaluations.
@@ -338,7 +368,7 @@ fn run_standalone_lasso_range_check() {
     // The `points_offset` argument here is a base for evaluation point indices for memory checking.
     let memory_checking_base_point_idx = prover_lookup_opening_points.len();
 
-    LassoProver::<F, Pcs>::memory_checking(
+    let memory_checking_result = LassoProver::<F, Pcs>::memory_checking(
         memory_checking_base_point_idx, // Base index for points used in memory checking evaluations
         &mut prover_lookup_opening_points,
         &mut prover_lookup_opening_evals,
@@ -352,7 +382,15 @@ fn run_standalone_lasso_range_check() {
         &beta_challenge, // tau is beta
         &mut transcript_p,
     );
+    if memory_checking_result.is_err() {
+        println!("Prover: Memory-checking prove failed.");
+        return;
+    }
     println!("Prover: Memory-checking prove done.");
+
+    // Sentinel after LassoProver::memory_checking
+    let sentinel_p4: F = transcript_p.squeeze_challenge();
+    println!("Prover Sentinel 4: {:?}", sentinel_p4);
 
     // 6. Prover: PCS Batch Opening
     let mut all_polys_to_open_refs: Vec<&MultilinearPolynomial<F>> = Vec::new();
@@ -372,7 +410,42 @@ fn run_standalone_lasso_range_check() {
     // If it needs to be opened, it should be committed separately and added here.
     // For now, we assume it's implicitly verified by the consistency of other parts.
 
-    Pcs::batch_open(
+    // Print prover's opening points, evaluations, and commitments
+    println!("\n=== Prover's opening points, evaluations, and commitments ===");
+    println!("prover_lookup_opening_points (total: {}):", prover_lookup_opening_points.len());
+    for (i, point) in prover_lookup_opening_points.iter().enumerate() {
+        println!("  Point[{}] (len={}): {:?}", i, point.len(), point);
+    }
+    
+    println!("\nPolynomials num_vars info:");
+    let mut poly_idx = 0;
+    for poly_group in committed_lasso_polys_nested_structs.iter() {
+        for poly_struct in poly_group.iter() {
+            println!("  Poly[{}] num_vars: {}", poly_idx, poly_struct.poly.num_vars());
+            poly_idx += 1;
+        }
+    }
+    
+    println!("\nprover_lookup_opening_evals (total: {}):", prover_lookup_opening_evals.len());
+    for (i, eval) in prover_lookup_opening_evals.iter().enumerate() {
+        println!("  Eval[{}]: poly_index={}, point_index={}, value={:?}", 
+            i, eval.poly(), eval.point(), eval.value());
+    }
+    
+    println!("\nall_comms_to_open_refs (total: {})", all_comms_to_open_refs.len());
+    
+    // Sentinel JUST BEFORE Pcs::batch_open
+    let sentinel_p_final: F = transcript_p.squeeze_challenge();
+    println!("Prover Sentinel Final (before batch_open): {:?}", sentinel_p_final);
+
+    // Prover, before batch_open
+    println!("Prover Commitments (total: {}):", all_comms_to_open_refs.len());
+    for (i, comm_ref) in all_comms_to_open_refs.iter().enumerate() {
+        // Assuming comm_ref is &G1Affine or derefs to G1Affine
+        // You might need to adjust how you access the coordinates based on your Pcs::Commitment type
+        println!("  CommP[{}]: x={:?}", i, &comm_ref.0);
+    }
+    let batch_open_result = Pcs::batch_open(
         &pcs_pp,
         all_polys_to_open_refs.into_iter(), // Must be Iterator<&'a MultilinearPolynomial<F>>
         all_comms_to_open_refs.into_iter(), // Must be Iterator<&'a Pcs::Commitment>
@@ -380,6 +453,10 @@ fn run_standalone_lasso_range_check() {
         &prover_lookup_opening_evals,
         &mut transcript_p,
     );
+    if batch_open_result.is_err() {
+        println!("Prover: PCS batch open failed: {:?}", batch_open_result.err());
+        panic!("Prover batch open failed");
+    }
     println!("Prover: PCS batch open done.");
 
     let proof_bytes = transcript_p.into_proof();
@@ -406,8 +483,11 @@ fn run_standalone_lasso_range_check() {
     println!("Verifier: Lasso commitments read.");
     // Order: [output_comm, dim_comms..., read_ts_comms..., final_cts_comms..., e_comms...]
     // Check consistency:
-    assert_eq!(verifier_lasso_comms.len(), estimated_batch_size -1 , "Mismatch in number of verifier commitments");
+    assert_eq!(verifier_lasso_comms.len(), estimated_batch_size, "Mismatch in number of verifier commitments");
 
+    // Sentinel after LassoVerifier::read_commitments
+    let sentinel_v1: F = transcript_v.squeeze_challenge();
+    println!("Verifier Sentinel 1: {:?}", sentinel_v1);
 
     // 2. Verifier: Squeeze challenges
     let beta_v: F = transcript_v.squeeze_challenge();
@@ -415,9 +495,13 @@ fn run_standalone_lasso_range_check() {
     assert_eq!(beta_v, beta_challenge, "Beta challenge mismatch");
     assert_eq!(gamma_v, gamma_challenge, "Gamma challenge mismatch");
 
-    let r_sumcheck_q_challenges_v: Vec<F> = transcript_v.squeeze_challenges(lookup_index_poly.num_vars()); // Assuming output_poly has same num_vars
+    let r_sumcheck_q_challenges_v: Vec<F> = transcript_v.squeeze_challenges(unified_num_vars); // Use unified num_vars
     assert_eq!(r_sumcheck_q_challenges_v, r_sumcheck_q_challenges, "Sumcheck q challenges mismatch");
     println!("Verifier: Challenges squeezed and matched.");
+
+    // Sentinel after squeezing beta_v, gamma_v, r_sumcheck_q_challenges_v
+    let sentinel_v2: F  = transcript_v.squeeze_challenge();
+    println!("Verifier Sentinel 2: {:?}", sentinel_v2);
 
     let mut verifier_lookup_opening_points: Vec<Vec<F>> = Vec::new();
     let mut verifier_lookup_opening_evals: Vec<Evaluation<F>> = Vec::new();
@@ -425,9 +509,9 @@ fn run_standalone_lasso_range_check() {
     // 3. Verifier: Verify Sum-check
     // `polys_offset` is the index of the output polynomial's commitment in `verifier_lasso_comms`.
     // `points_offset` is the index of `r_sumcheck_q_challenges_v` in `verifier_lookup_opening_points`.
-    LassoVerifier::<F, Pcs>::verify_sum_check(
+    let sumcheck_result = LassoVerifier::<F, Pcs>::verify_sum_check(
         &table,
-        lookup_index_poly.num_vars(), // num_vars for the sumcheck
+        unified_num_vars, // num_vars for the sumcheck
         output_poly_commitment_idx,   // PCS index of the output polynomial in verifier_lasso_comms
         0,                            // Index of the point `r_sumcheck_q_challenges_v` for output poly eval
         &mut verifier_lookup_opening_points,
@@ -435,15 +519,23 @@ fn run_standalone_lasso_range_check() {
         &r_sumcheck_q_challenges_v,
         &mut transcript_v,
     );
+    if sumcheck_result.is_err() {
+        println!("Verifier: Sum-check verify failed.");
+        return;
+    }
     println!("Verifier: Sum-check verify done.");
+
+    // Sentinel after LassoVerifier::verify_sum_check
+    let sentinel_v3: F = transcript_v.squeeze_challenge();
+    println!("Verifier Sentinel 3: {:?}", sentinel_v3);
 
     // 4. Verifier: Verify Memory Checking
     // `polys_offset` needs to be the base index for dim/read_ts/final_cts commitments in `verifier_lasso_comms`.
     // `points_offset` is the base index for points related to memory checking in `verifier_lookup_opening_points`.
     let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();
-    LassoVerifier::<F, Pcs>::memory_checking(
-        padded_lookup_size, // num_reads
-        first_dim_commitment_idx, // Base PCS index for Dims, ReadTs, FinalCts, E_polys groups
+    let memory_checking_result = LassoVerifier::<F, Pcs>::memory_checking(
+        unified_num_vars, // num_reads
+        output_poly_commitment_idx, // Base PCS index for Dims, ReadTs, FinalCts, E_polys groups
         memory_checking_base_point_idx_v,
         &mut verifier_lookup_opening_points,
         &mut verifier_lookup_opening_evals,
@@ -452,16 +544,54 @@ fn run_standalone_lasso_range_check() {
         &beta_v, // tau is beta
         &mut transcript_v,
     );
+    if memory_checking_result.is_err() {
+        println!("Verifier: Memory-checking verify failed.");
+        return;
+    }
     println!("Verifier: Memory-checking verify done.");
 
+    // Sentinel after LassoVerifier::memory_checking
+    let sentinel_v4: F = transcript_v.squeeze_challenge();
+    println!("Verifier Sentinel 4: {:?}", sentinel_v4);
+
     // 5. Verifier: PCS Batch Verify
-    Pcs::batch_verify(
+    // Print verifier's opening points, evaluations, and commitments
+    println!("\n=== Verifier's opening points, evaluations, and commitments ===");
+    println!("verifier_lookup_opening_points (total: {}):", verifier_lookup_opening_points.len());
+    for (i, point) in verifier_lookup_opening_points.iter().enumerate() {
+        println!("  Point[{}]: {:?}", i, point);
+    }
+    
+    println!("\nverifier_lookup_opening_evals (total: {}):", verifier_lookup_opening_evals.len());
+    for (i, eval) in verifier_lookup_opening_evals.iter().enumerate() {
+        println!("  Eval[{}]: poly_index={}, point_index={}, value={:?}", 
+            i, eval.poly(), eval.point(), eval.value());
+    }
+    
+    println!("\nverifier_lasso_comms (total: {})", verifier_lasso_comms.len());
+    
+    // Sentinel JUST BEFORE Pcs::batch_verify
+    let sentinel_v_final: F = transcript_v.squeeze_challenge();
+    println!("Verifier Sentinel Final (before batch_verify): {:?}", sentinel_v_final);
+
+    // Verifier, before batch_verify
+    println!("Verifier Commitments (total: {}):", verifier_lasso_comms.len());
+    for (i, comm_ref) in verifier_lasso_comms.iter().enumerate() {
+        // Assuming comm_ref is &G1Affine or derefs to G1Affine
+        // You might need to adjust how you access the coordinates based on your Pcs::Commitment type
+        println!("  CommV[{}]: x={:?}", i, &comm_ref.0);
+    }
+    let batch_verify_result = Pcs::batch_verify(
         &pcs_vp,
         verifier_lasso_comms.iter(),
         &verifier_lookup_opening_points,
         &verifier_lookup_opening_evals,
         &mut transcript_v,
     );
+    if batch_verify_result.is_err() {
+        println!("Verifier: PCS batch verify failed: {:?}", batch_verify_result.err());
+        panic!("Verifier batch verify failed");
+    }
     println!("Verifier: PCS batch verify done.");
 
     println!("\nStandalone Lasso Range Check Successful!");

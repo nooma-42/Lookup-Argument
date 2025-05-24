@@ -204,8 +204,8 @@ impl<'a, F: PrimeField> MemoryCheckingVerifier<F> {
         final_cts_poly_ys: &[F],
         e_poly_xs: &[F],
     ) {
-        let x_offset = points_offset + lookup_opening_points.len();
-        let y_offset = x_offset + 1;
+        let x_offset = lookup_opening_points.len();
+        let y_offset = lookup_opening_points.len() + 1;
         let (dim_xs, read_ts_poly_xs, final_cts_poly_ys) = self
             .chunks
             .iter()
