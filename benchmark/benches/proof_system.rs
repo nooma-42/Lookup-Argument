@@ -795,7 +795,64 @@ fn create_output(systems: &[System]) {
 
 // Add the benchmark function for Lasso
 fn bench_lasso(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // Calculate table and lookup sizes based on k and ratio
+    // Capture and redirect detailed output if not verbose
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| {
+            lasso::test_lasso_by_k_with_ratio(k, n_to_n_ratio)
+        })
+    } else {
+        println!("Running Lasso benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+        
+        // Calculate range and lookup sizes for display
+        let range_bits = k.min(8);
+        let range_size = 1 << range_bits;
+        let lookup_size = range_size / n_to_n_ratio;
+        
+        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, range_bits, lookup_size);
+        
+        let result = lasso::test_lasso_by_k_with_ratio(k, n_to_n_ratio);
+        
+        if verbose {
+            println!("Lasso test completed. Results:");
+            for timing in &result {
+                println!("  {}", timing);
+            }
+        }
+        
+        result
+    };
 
-    unimplemented!()
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::Lasso.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: Lasso raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract timing values using the same pattern as other systems
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "Lasso times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
+        );
+    }
+
+    // Return structured benchmark result
+    BenchmarkResult {
+        system: System::Lasso,
+        k_value: k,
+        n_to_n_ratio,
+        setup_time,
+        prove_time,
+        verify_time,
+    }
 }

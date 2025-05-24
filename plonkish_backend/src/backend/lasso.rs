@@ -199,7 +199,269 @@ impl<F: PrimeField, const NUM_BITS: usize, const LIMB_BITS: usize> DecomposableT
 
 // TODO: split run standalone lasso into test and mod function 
 use crate::util::test::std_rng;
+use std::time::Instant;
 
+// Simple interface functions for benchmarking, similar to other lookup arguments
+
+/// Generate values for range check based on k parameter
+pub fn generate_range_check_values(k: usize, n_to_n_ratio: usize) -> Vec<Fr> {
+    // For range check, we limit the range to avoid extremely large tables
+    let range_bits = k.min(8); // Maximum 8-bit range (0-255)
+    let range_size = 1 << range_bits;
+    let lookup_size = range_size / n_to_n_ratio;
+    
+    // Generate values to check (within the range)
+    (0..lookup_size)
+        .map(|i| Fr::from((i % range_size) as u64))
+        .collect()
+}
+
+/// Run Lasso range check with given values and return timing information
+pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
+    let mut timings: Vec<String> = vec![];
+    
+    // Constants for range check
+    const NUM_BITS_FOR_RANGE_CHECK: usize = 8;
+    const LIMB_BITS_FOR_RANGE_CHECK: usize = 4;
+    type Pcs = MultilinearKzg<Bn256>;
+    
+    let start_total = Instant::now();
+    
+    let num_lookups = values_to_check.len();
+    if num_lookups == 0 {
+        timings.push("Error: No values to check".to_string());
+        return timings;
+    }
+
+    let table: Box<dyn DecomposableTable<Fr>> = Box::new(
+        RangeTable::<Fr, NUM_BITS_FOR_RANGE_CHECK, LIMB_BITS_FOR_RANGE_CHECK>::new()
+    );
+    
+    // Setup phase timing
+    let start_setup = Instant::now();
+    
+    let chunk_bits = table.chunk_bits();
+    let original_num_vars_for_lookups = (num_lookups as f64).log2().ceil() as usize;
+    let unified_num_vars = *chunk_bits.iter().max().unwrap().max(&original_num_vars_for_lookups);
+    let padded_lookup_size = 1 << unified_num_vars;
+
+    let mut padded_values = values_to_check.clone();
+    padded_values.resize(padded_lookup_size, *values_to_check.last().unwrap_or(&Fr::ZERO));
+
+    let lookup_index_poly = MultilinearPolynomial::new(padded_values.clone());
+    let claimed_lookup_output_poly = MultilinearPolynomial::new(padded_values.clone());
+    let subtable_polys_mle: Vec<MultilinearPolynomial<Fr>> = table.subtable_polys();
+    let subtable_polys_mle_refs: Vec<&MultilinearPolynomial<Fr>> = subtable_polys_mle.iter().collect();
+
+    let mut rng = std_rng();
+    let max_limb_poly_size = 1 << LIMB_BITS_FOR_RANGE_CHECK;
+    let remainder_bits = NUM_BITS_FOR_RANGE_CHECK % LIMB_BITS_FOR_RANGE_CHECK;
+    let max_rem_poly_size = if remainder_bits > 0 { 1 << remainder_bits } else { 0 };
+    let max_gkr_point_size = (1 << unified_num_vars).max(1 << LIMB_BITS_FOR_RANGE_CHECK);
+    
+    let max_poly_degree_for_pcs = padded_lookup_size
+        .max(max_limb_poly_size)
+        .max(max_rem_poly_size)
+        .max(max_gkr_point_size);
+
+    let num_chunks = table.chunk_bits().len();
+    let num_memories = table.num_memories();
+    let estimated_batch_size = 1 + num_chunks * 3 + num_memories;
+
+    let pcs_param = Pcs::setup(max_poly_degree_for_pcs, estimated_batch_size, &mut rng).unwrap();
+    let (pcs_pp, pcs_vp) = Pcs::trim(&pcs_param, max_poly_degree_for_pcs, estimated_batch_size).unwrap();
+    
+    let setup_duration = start_setup.elapsed();
+    timings.push(format!("Setup: {}ms", setup_duration.as_millis()));
+
+    // Prove phase timing
+    let start_prove = Instant::now();
+    
+    let mut transcript_p = Keccak256Transcript::new(());
+
+    // Prover: LassoProver::commit
+    let (committed_lasso_polys_nested_structs, committed_lasso_comms_nested) = 
+        LassoProver::<Fr, Pcs>::commit(
+            &pcs_pp,
+            0,
+            &table,
+            &subtable_polys_mle_refs,
+            claimed_lookup_output_poly.clone(),
+            &lookup_index_poly,
+            &mut transcript_p,
+        ).unwrap();
+
+    let prover_lookup_output_poly_struct = &committed_lasso_polys_nested_structs[0][0];
+    let prover_dims_polys_struct = &committed_lasso_polys_nested_structs[1];
+    let prover_read_ts_polys_struct = &committed_lasso_polys_nested_structs[2];
+    let prover_final_cts_polys_struct = &committed_lasso_polys_nested_structs[3];
+    let prover_e_polys_struct = &committed_lasso_polys_nested_structs[4];
+    let e_poly_refs: Vec<&Poly<Fr>> = prover_e_polys_struct.iter().collect();
+
+    // Squeeze challenges
+    let _sentinel_p1: Fr = transcript_p.squeeze_challenge();
+    let beta_challenge: Fr = transcript_p.squeeze_challenge();
+    let gamma_challenge: Fr = transcript_p.squeeze_challenge();
+    let r_sumcheck_q_challenges: Vec<Fr> = transcript_p.squeeze_challenges(prover_lookup_output_poly_struct.num_vars());
+    let _sentinel_p2: Fr = transcript_p.squeeze_challenge();
+
+    let mut prover_lookup_opening_points: Vec<Vec<Fr>> = Vec::new();
+    let mut prover_lookup_opening_evals: Vec<Evaluation<Fr>> = Vec::new();
+
+    let output_poly_commitment_idx = 0;
+
+    // Sum-check
+    LassoProver::<Fr, Pcs>::prove_sum_check(
+        output_poly_commitment_idx,
+        &mut prover_lookup_opening_points,
+        &mut prover_lookup_opening_evals,
+        &table,
+        prover_lookup_output_poly_struct,
+        &e_poly_refs,
+        &r_sumcheck_q_challenges,
+        prover_lookup_output_poly_struct.num_vars(),
+        &mut transcript_p,
+    ).unwrap();
+
+    let _sentinel_p3: Fr = transcript_p.squeeze_challenge();
+
+    // Memory checking
+    let memory_checking_base_point_idx = prover_lookup_opening_points.len();
+    LassoProver::<Fr, Pcs>::memory_checking(
+        memory_checking_base_point_idx,
+        &mut prover_lookup_opening_points,
+        &mut prover_lookup_opening_evals,
+        &table,
+        &subtable_polys_mle_refs,
+        prover_dims_polys_struct,
+        prover_read_ts_polys_struct,
+        prover_final_cts_polys_struct,
+        prover_e_polys_struct,
+        &gamma_challenge,
+        &beta_challenge,
+        &mut transcript_p,
+    ).unwrap();
+
+    let _sentinel_p4: Fr = transcript_p.squeeze_challenge();
+
+    // PCS batch opening
+    let mut all_polys_to_open_refs: Vec<&MultilinearPolynomial<Fr>> = Vec::new();
+    let mut all_comms_to_open_refs: Vec<&<Pcs as PolynomialCommitmentScheme<Fr>>::Commitment> = Vec::new();
+
+    for poly_group in committed_lasso_polys_nested_structs.iter() {
+        for poly_struct in poly_group.iter() {
+            all_polys_to_open_refs.push(&poly_struct.poly);
+        }
+    }
+    for comm_group in committed_lasso_comms_nested.iter() {
+        for comm in comm_group.iter() {
+            all_comms_to_open_refs.push(comm);
+        }
+    }
+
+    let _sentinel_p_final: Fr = transcript_p.squeeze_challenge();
+
+    // Direct batch opening without grouping (following the working approach)
+    Pcs::batch_open(
+        &pcs_pp,
+        all_polys_to_open_refs.into_iter(),
+        all_comms_to_open_refs.into_iter(),
+        &prover_lookup_opening_points,
+        &prover_lookup_opening_evals,
+        &mut transcript_p,
+    ).unwrap();
+
+    let proof_bytes = transcript_p.into_proof();
+    
+    let prove_duration = start_prove.elapsed();
+    timings.push(format!("Prove: {}ms", prove_duration.as_millis()));
+
+    // Verify phase timing
+    let start_verify = Instant::now();
+    
+    let mut transcript_v = Keccak256Transcript::from_proof((), proof_bytes.as_slice());
+
+    // Verifier: Read commitments
+    let verifier_lasso_comms: Vec<<Pcs as PolynomialCommitmentScheme<Fr>>::Commitment> = 
+        LassoVerifier::<Fr, Pcs>::read_commitments(
+            &pcs_vp,
+            &table,
+            &mut transcript_v,
+        ).unwrap();
+
+    // Squeeze challenges
+    let _sentinel_v1: Fr = transcript_v.squeeze_challenge();
+    let beta_v: Fr = transcript_v.squeeze_challenge();
+    let gamma_v: Fr = transcript_v.squeeze_challenge();
+    let r_sumcheck_q_challenges_v: Vec<Fr> = transcript_v.squeeze_challenges(unified_num_vars);
+    let _sentinel_v2: Fr = transcript_v.squeeze_challenge();
+
+    let mut verifier_lookup_opening_points: Vec<Vec<Fr>> = Vec::new();
+    let mut verifier_lookup_opening_evals: Vec<Evaluation<Fr>> = Vec::new();
+
+    // Verify sum-check
+    LassoVerifier::<Fr, Pcs>::verify_sum_check(
+        &table,
+        unified_num_vars,
+        output_poly_commitment_idx,
+        0,
+        &mut verifier_lookup_opening_points,
+        &mut verifier_lookup_opening_evals,
+        &r_sumcheck_q_challenges_v,
+        &mut transcript_v,
+    ).unwrap();
+
+    let _sentinel_v3: Fr = transcript_v.squeeze_challenge();
+
+    // Verify memory checking
+    let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();
+    LassoVerifier::<Fr, Pcs>::memory_checking(
+        unified_num_vars,
+        output_poly_commitment_idx,
+        memory_checking_base_point_idx_v,
+        &mut verifier_lookup_opening_points,
+        &mut verifier_lookup_opening_evals,
+        &table,
+        &gamma_v,
+        &beta_v,
+        &mut transcript_v,
+    ).unwrap();
+
+    let _sentinel_v4: Fr = transcript_v.squeeze_challenge();
+
+    // PCS batch verify
+    let _sentinel_v_final: Fr = transcript_v.squeeze_challenge();
+
+    // Direct batch verification without grouping (following the working approach)
+    Pcs::batch_verify(
+        &pcs_vp,
+        verifier_lasso_comms.iter(),
+        &verifier_lookup_opening_points,
+        &verifier_lookup_opening_evals,
+        &mut transcript_v,
+    ).unwrap();
+
+    let verify_duration = start_verify.elapsed();
+    timings.push(format!("Verify: {}ms", verify_duration.as_millis()));
+
+    let total_duration = start_total.elapsed();
+    timings.push(format!("Total time: {}ms", total_duration.as_millis()));
+
+    timings
+}
+
+/// Run Lasso range check with k parameter, similar to other lookup arguments
+pub fn test_lasso_by_k(k: usize) -> Vec<String> {
+    let n_to_n_ratio = 2; // Default ratio
+    let values_to_check = generate_range_check_values(k, n_to_n_ratio);
+    test_lasso_by_input(values_to_check)
+}
+
+/// Run Lasso range check with k parameter and custom ratio
+pub fn test_lasso_by_k_with_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+    let values_to_check = generate_range_check_values(k, n_to_n_ratio);
+    test_lasso_by_input(values_to_check)
+}
 
 fn run_standalone_lasso_range_check() {
     // 0. Constants and Typedefs
@@ -601,8 +863,74 @@ fn run_standalone_lasso_range_check() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
     #[test]
     fn test_lasso_range_check() {
         run_standalone_lasso_range_check();
+    }
+    
+    #[test]
+    fn test_lasso_interface_by_k() {
+        let timings = test_lasso_by_k(4);
+        println!("Lasso by K=4 Timings:");
+        for timing in &timings {
+            println!("  {}", timing);
+        }
+        // Verify that we got timing results
+        assert!(timings.len() >= 3); // Setup, Prove, Verify (minimum)
+        assert!(timings.iter().any(|t| t.contains("Setup")));
+        assert!(timings.iter().any(|t| t.contains("Prove")));
+        assert!(timings.iter().any(|t| t.contains("Verify")));
+    }
+    
+    #[test]
+    fn test_lasso_interface_by_k_with_ratio() {
+        let timings = test_lasso_by_k_with_ratio(4, 4); // N:n = 4:1 ratio
+        println!("Lasso by K=4, ratio=4 Timings:");
+        for timing in &timings {
+            println!("  {}", timing);
+        }
+        // Verify that we got timing results
+        assert!(timings.len() >= 3); // Setup, Prove, Verify (minimum)
+        assert!(timings.iter().any(|t| t.contains("Setup")));
+        assert!(timings.iter().any(|t| t.contains("Prove")));
+        assert!(timings.iter().any(|t| t.contains("Verify")));
+    }
+    
+    #[test]
+    fn test_lasso_interface_by_input() {
+        let values_to_check = vec![
+            Fr::from(3u64), 
+            Fr::from(10u64), 
+            Fr::from(250u64), 
+            Fr::from(0u64)
+        ];
+        
+        let timings = test_lasso_by_input(values_to_check);
+        println!("Lasso by Input Timings:");
+        for timing in &timings {
+            println!("  {}", timing);
+        }
+        // Verify that we got timing results
+        assert!(timings.len() >= 3); // Setup, Prove, Verify (minimum)
+        assert!(timings.iter().any(|t| t.contains("Setup")));
+        assert!(timings.iter().any(|t| t.contains("Prove")));
+        assert!(timings.iter().any(|t| t.contains("Verify")));
+    }
+    
+    #[test]
+    fn test_generate_range_check_values() {
+        let values = generate_range_check_values(6, 2); // k=6, ratio=2
+        println!("Generated values for k=6, ratio=2: {} values", values.len());
+        
+        // Range check: for k=6, range_bits = min(6, 8) = 6, so range_size = 64
+        // lookup_size = 64 / 2 = 32
+        assert_eq!(values.len(), 32);
+        
+        // All values should be in range [0, 64)
+        for value in &values {
+            let val_u64 = value.to_repr().as_ref()[0];
+            assert!(val_u64 < 64, "Value {} out of range", val_u64);
+        }
     }
 }
