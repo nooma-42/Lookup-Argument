@@ -19,6 +19,7 @@ pub mod plookup;
 pub mod logupgkr;
 pub mod unihyperplonk;
 pub mod caulk;
+pub mod lasso;
 
 pub trait PlonkishBackend<F: Field>: Clone + Debug {
     type Pcs: PolynomialCommitmentScheme<F>;

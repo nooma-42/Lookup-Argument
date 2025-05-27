@@ -1,7 +1,7 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup};
+use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup, lasso};
 use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
-use plonkish_backend::pcs::univariate::UnivariateKzg;
+use plonkish_backend::pcs::{univariate::UnivariateKzg, multilinear::MultilinearKzg};
 use plonkish_backend::util::arithmetic::PrimeField;
 use plonkish_backend::util::transcript::Keccak256Transcript;
 use regex::Regex;
@@ -673,11 +673,12 @@ enum System {
     LogupGKR,
     Plookup,
     Caulk,
+    Lasso,
 }
 
 impl System {
-    fn all() -> Vec<System> {
-        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk]
+    fn all() -> Vec<Self> {
+        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk, System::Lasso]
     }
 
     fn output_path(&self) -> String {
@@ -699,6 +700,7 @@ impl System {
             System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
             System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
             System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
+            System::Lasso => bench_lasso(k, n_to_n_ratio, verbose, debug),
         }
     }
 }
@@ -711,6 +713,7 @@ impl Display for System {
             System::LogupGKR => write!(f, "LogupGKR"),
             System::Plookup => write!(f, "Plookup"),
             System::Caulk => write!(f, "Caulk"),
+            System::Lasso => write!(f, "Lasso"),
         }
     }
 }
@@ -718,7 +721,7 @@ impl Display for System {
 fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) {
     let (systems, k_range, n_to_n_ratio, verbose, output_format, debug) =
         args().chain(Some("".to_string())).tuple_windows().fold(
-            (Vec::new(), 20..26, 2, false, OutputFormat::Table, false), // Default N:n ratio is 2
+            (Vec::new(), 20..26, 2, false, OutputFormat::Table, false),
             |(mut systems, mut k_range, mut n_to_n_ratio, mut verbose, mut output_format, mut debug),
              (key, value)| {
                 match key.as_str() {
@@ -734,7 +737,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) 
                         "Plookup" => systems.push(System::Plookup),
                         "caulk" => systems.push(System::Caulk),
                         "Caulk" => systems.push(System::Caulk),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk}}"),
+                        "lasso" => systems.push(System::Lasso),
+                        "Lasso" => systems.push(System::Lasso),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk, lasso}}"),
                     },
 
                     "--k" => {
@@ -785,5 +790,69 @@ fn create_output(systems: &[System]) {
     }
     for system in systems {
         File::create(system.output_path()).unwrap();
+    }
+}
+
+// Add the benchmark function for Lasso
+fn bench_lasso(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // Capture and redirect detailed output if not verbose
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| {
+            lasso::test_lasso_by_k_with_ratio(k, n_to_n_ratio)
+        })
+    } else {
+        println!("Running Lasso benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+        
+        // Calculate range and lookup sizes for display
+        let range_bits = k.min(8);
+        let range_size = 1 << range_bits;
+        let lookup_size = range_size / n_to_n_ratio;
+        
+        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, range_bits, lookup_size);
+        
+        let result = lasso::test_lasso_by_k_with_ratio(k, n_to_n_ratio);
+        
+        if verbose {
+            println!("Lasso test completed. Results:");
+            for timing in &result {
+                println!("  {}", timing);
+            }
+        }
+        
+        result
+    };
+
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::Lasso.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: Lasso raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract timing values using the same pattern as other systems
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "Lasso times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
+        );
+    }
+
+    // Return structured benchmark result
+    BenchmarkResult {
+        system: System::Lasso,
+        k_value: k,
+        n_to_n_ratio,
+        setup_time,
+        prove_time,
+        verify_time,
     }
 }
