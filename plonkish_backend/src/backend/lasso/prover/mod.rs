@@ -46,6 +46,7 @@ impl<F: PrimeField> Poly<F> {
 #[derive(Clone, Debug)]
 pub struct Chunk<'a, F: PrimeField> {
     pub(super) chunk_index: usize,
+    pub(super) chunk_bits: usize,
     pub(super) dim: &'a Poly<F>,
     pub(super) read_ts_poly: &'a Poly<F>,
     pub(super) final_cts_poly: &'a Poly<F>,
@@ -55,6 +56,7 @@ pub struct Chunk<'a, F: PrimeField> {
 impl<'a, F: PrimeField> Chunk<'a, F> {
     fn new(
         chunk_index: usize,
+        chunk_bits: usize,
         dim: &'a Poly<F>,
         read_ts_poly: &'a Poly<F>,
         final_cts_poly: &'a Poly<F>,
@@ -65,6 +67,7 @@ impl<'a, F: PrimeField> Chunk<'a, F> {
 
         Self {
             chunk_index,
+            chunk_bits,
             dim,
             read_ts_poly,
             final_cts_poly,
@@ -77,7 +80,7 @@ impl<'a, F: PrimeField> Chunk<'a, F> {
     }
 
     pub fn chunk_bits(&self) -> usize {
-        self.final_cts_poly.num_vars()
+        self.chunk_bits
     }
 
     pub fn num_reads(&self) -> usize {
@@ -93,10 +96,20 @@ impl<'a, F: PrimeField> Chunk<'a, F> {
     }
 
     pub fn chunk_poly_evals(&self, x: &[F], y: &[F]) -> Vec<F> {
+        // Pad y to match the extended polynomial's variable count if needed
+        let final_cts_num_vars = self.final_cts_poly.num_vars();
+        let y_padded = if y.len() < final_cts_num_vars {
+            let mut padded = y.to_vec();
+            padded.resize(final_cts_num_vars, F::ZERO);
+            padded
+        } else {
+            y.to_vec()
+        };
+        
         vec![
             self.dim.evaluate(x),
             self.read_ts_poly.evaluate(x),
-            self.final_cts_poly.evaluate(y),
+            self.final_cts_poly.evaluate(&y_padded),
         ]
     }
 
@@ -254,9 +267,10 @@ impl<
                 let dim = &dims[chunk_index];
                 let read_ts_poly = &read_ts_polys[chunk_index];
                 let final_cts_poly = &final_cts_polys[chunk_index];
+                let chunk_bits = table.chunk_bits()[chunk_index];
                 chunk_map.insert(
                     chunk_index,
-                    Chunk::new(chunk_index, dim, read_ts_poly, final_cts_poly, memory),
+                    Chunk::new(chunk_index, chunk_bits, dim, read_ts_poly, final_cts_poly, memory),
                 );
             }
         });
@@ -306,6 +320,7 @@ impl<
         e_polys: &'a [Poly<F>],
         gamma: &F,
         tau: &F,
+        unified_num_vars: usize,
     ) -> Vec<MemoryCheckingProver<'a, F>> {
         let chunks = Self::chunks(
             table,
@@ -335,7 +350,7 @@ impl<
             .enumerate()
             .map(|(index, (_, chunks))| {
                 let points_offset = points_offset + 2 + 2 * index;
-                MemoryCheckingProver::new(points_offset, chunks, tau, gamma)
+                MemoryCheckingProver::new(points_offset, chunks, tau, gamma, unified_num_vars)
             })
             .collect_vec()
     }
@@ -352,6 +367,7 @@ impl<
         e_polys: &'a [Poly<F>],
         gamma: &F,
         tau: &F,
+        unified_num_vars: usize,
         transcript: &mut impl FieldTranscriptWrite<F>,
     ) -> Result<(), Error> {
         let mut memory_checking = LassoProver::<F, Pcs>::prepare_memory_checking(
@@ -364,6 +380,7 @@ impl<
             &e_polys,
             &gamma,
             &tau,
+            unified_num_vars,
         );
 
         memory_checking
@@ -391,15 +408,38 @@ impl<
     ) -> Result<(Vec<Vec<Poly<F>>>, Vec<Vec<Pcs::Commitment>>), Error> {
         let num_chunks = table.chunk_bits().len();
 
+        // Calculate unified_num_vars for memory checking consistency first
+        let chunk_bits = table.chunk_bits();
+        let original_num_vars_for_lookups = lookup_index_poly.num_vars();
+        let unified_num_vars = *chunk_bits.iter().max().unwrap().max(&original_num_vars_for_lookups);
+
         // commit to lookup_output_poly
         let lookup_output_comm = Pcs::commit_and_write(&pp, &lookup_output_poly, transcript)?;
 
         // get surge and dims
         let mut surge = Surge::<F, Pcs>::new();
 
-        // commit to dims
+        // get dims first, then extend and commit
         let dims = surge.commit(&table, lookup_index_poly);
-        let dim_comms = Pcs::batch_commit_and_write(pp, &dims, transcript)?;
+
+        // Helper function to extend a polynomial to unified_num_vars
+        let extend_poly_to_unified_vars = |poly: MultilinearPolynomial<F>| -> MultilinearPolynomial<F> {
+            let current_vars = poly.num_vars();
+            if current_vars >= unified_num_vars {
+                poly
+            } else {
+                let current_size = 1 << current_vars;
+                let unified_size = 1 << unified_num_vars;
+                let mut extended_evals = vec![F::ZERO; unified_size];
+                
+                // Copy the original evaluations and pad with zeros
+                for i in 0..current_size {
+                    extended_evals[i] = poly[i];
+                }
+                
+                MultilinearPolynomial::new(extended_evals)
+            }
+        };
 
         // get e_polys & read_ts_polys & final_cts_polys
         let e_polys = {
@@ -408,17 +448,26 @@ impl<
         };
         let (read_ts_polys, final_cts_polys) = surge.counter_polys(&table);
 
-        // commit to read_ts_polys & final_cts_polys & e_polys
-        let read_ts_comms = Pcs::batch_commit_and_write(&pp, &read_ts_polys, transcript)?;
-        let final_cts_comms = Pcs::batch_commit_and_write(&pp, &final_cts_polys, transcript)?;
-        let e_comms = Pcs::batch_commit_and_write(&pp, e_polys.as_slice(), transcript)?;
+        // Extend dims to unified_num_vars and commit
+        let extended_dims = dims.into_iter().map(extend_poly_to_unified_vars).collect_vec();
+        let dim_comms = Pcs::batch_commit_and_write(pp, &extended_dims, transcript)?;
+        
+        // Extend read_ts_polys, final_cts_polys, and e_polys to unified_num_vars before committing
+        let extended_read_ts_polys = read_ts_polys.into_iter().map(extend_poly_to_unified_vars).collect_vec();
+        let extended_final_cts_polys = final_cts_polys.into_iter().map(extend_poly_to_unified_vars).collect_vec();
+        let extended_e_polys = e_polys.into_iter().map(extend_poly_to_unified_vars).collect_vec();
+
+        // commit to read_ts_polys & final_cts_polys & e_polys (now extended)
+        let read_ts_comms = Pcs::batch_commit_and_write(&pp, &extended_read_ts_polys, transcript)?;
+        let final_cts_comms = Pcs::batch_commit_and_write(&pp, &extended_final_cts_polys, transcript)?;
+        let e_comms = Pcs::batch_commit_and_write(&pp, extended_e_polys.as_slice(), transcript)?;
 
         let lookup_output_poly = Poly {
             offset: lookup_polys_offset,
             poly: lookup_output_poly,
         };
 
-        let dims = dims
+        let dims = extended_dims
             .into_iter()
             .enumerate()
             .map(|(chunk_index, dim)| Poly {
@@ -427,7 +476,7 @@ impl<
             })
             .collect_vec();
 
-        let read_ts_polys = read_ts_polys
+        let read_ts_polys = extended_read_ts_polys
             .into_iter()
             .enumerate()
             .map(|(chunk_index, read_ts_poly)| Poly {
@@ -436,7 +485,7 @@ impl<
             })
             .collect_vec();
 
-        let final_cts_polys = final_cts_polys
+        let final_cts_polys = extended_final_cts_polys
             .into_iter()
             .enumerate()
             .map(|(chunk_index, final_cts_poly)| Poly {
@@ -445,7 +494,7 @@ impl<
             })
             .collect_vec();
 
-        let e_polys = e_polys
+        let e_polys = extended_e_polys
             .into_iter()
             .enumerate()
             .map(|(memory_index, e_poly)| Poly {

@@ -35,6 +35,10 @@ impl<F> MultilinearPolynomialTerms<F> {
             expression,
         }
     }
+
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
 }
 
 impl<F: Field> MultilinearPolynomialTerms<F> {

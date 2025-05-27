@@ -302,7 +302,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     let _sentinel_p1: Fr = transcript_p.squeeze_challenge();
     let beta_challenge: Fr = transcript_p.squeeze_challenge();
     let gamma_challenge: Fr = transcript_p.squeeze_challenge();
-    let r_sumcheck_q_challenges: Vec<Fr> = transcript_p.squeeze_challenges(prover_lookup_output_poly_struct.num_vars());
+    let r_sumcheck_q_challenges: Vec<Fr> = transcript_p.squeeze_challenges(unified_num_vars);
     let _sentinel_p2: Fr = transcript_p.squeeze_challenge();
 
     let mut prover_lookup_opening_points: Vec<Vec<Fr>> = Vec::new();
@@ -319,11 +319,12 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
         prover_lookup_output_poly_struct,
         &e_poly_refs,
         &r_sumcheck_q_challenges,
-        prover_lookup_output_poly_struct.num_vars(),
+        unified_num_vars,
         &mut transcript_p,
     ).unwrap();
 
     let _sentinel_p3: Fr = transcript_p.squeeze_challenge();
+    println!("DEBUG Prover: _sentinel_p3 = {:?}", _sentinel_p3);
 
     // Memory checking
     let memory_checking_base_point_idx = prover_lookup_opening_points.len();
@@ -339,6 +340,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
         prover_e_polys_struct,
         &gamma_challenge,
         &beta_challenge,
+        unified_num_vars,
         &mut transcript_p,
     ).unwrap();
 
@@ -412,18 +414,20 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     ).unwrap();
 
     let _sentinel_v3: Fr = transcript_v.squeeze_challenge();
+    println!("DEBUG Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
 
     // Verify memory checking
     let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();
     LassoVerifier::<Fr, Pcs>::memory_checking(
-        unified_num_vars,
-        output_poly_commitment_idx,
-        memory_checking_base_point_idx_v,
+        unified_num_vars, // num_reads
+        output_poly_commitment_idx, // polys_offset
+        memory_checking_base_point_idx_v, // points_offset
         &mut verifier_lookup_opening_points,
         &mut verifier_lookup_opening_evals,
         &table,
         &gamma_v,
-        &beta_v,
+        &beta_v, // tau
+        unified_num_vars, // unified_num_vars
         &mut transcript_v,
     ).unwrap();
 
@@ -620,7 +624,7 @@ fn run_standalone_lasso_range_check() {
 
     // Sentinel after LassoProver::prove_sum_check
     let sentinel_p3: F = transcript_p.squeeze_challenge();
-    println!("Prover Sentinel 3: {:?}", sentinel_p3);
+    println!("DEBUG Prover: _sentinel_p3 = {:?}", sentinel_p3);
 
     // 5. Prover: Memory Checking
     // `points_offset` for memory checking evaluations.
@@ -642,6 +646,7 @@ fn run_standalone_lasso_range_check() {
         prover_e_polys_struct,
         &gamma_challenge,
         &beta_challenge, // tau is beta
+        unified_num_vars, // unified number of variables for memory checking
         &mut transcript_p,
     );
     if memory_checking_result.is_err() {
@@ -709,8 +714,8 @@ fn run_standalone_lasso_range_check() {
     }
     let batch_open_result = Pcs::batch_open(
         &pcs_pp,
-        all_polys_to_open_refs.into_iter(), // Must be Iterator<&'a MultilinearPolynomial<F>>
-        all_comms_to_open_refs.into_iter(), // Must be Iterator<&'a Pcs::Commitment>
+        all_polys_to_open_refs, // Must be Vec<&'a MultilinearPolynomial<F>>
+        all_comms_to_open_refs, // Must be Vec<&'a Pcs::Commitment>
         &prover_lookup_opening_points,
         &prover_lookup_opening_evals,
         &mut transcript_p,
@@ -787,34 +792,25 @@ fn run_standalone_lasso_range_check() {
     }
     println!("Verifier: Sum-check verify done.");
 
-    // Sentinel after LassoVerifier::verify_sum_check
-    let sentinel_v3: F = transcript_v.squeeze_challenge();
-    println!("Verifier Sentinel 3: {:?}", sentinel_v3);
+    let _sentinel_v3: Fr = transcript_v.squeeze_challenge();
+    println!("DEBUG Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
 
-    // 4. Verifier: Verify Memory Checking
-    // `polys_offset` needs to be the base index for dim/read_ts/final_cts commitments in `verifier_lasso_comms`.
-    // `points_offset` is the base index for points related to memory checking in `verifier_lookup_opening_points`.
+    // Verify memory checking
     let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();
-    let memory_checking_result = LassoVerifier::<F, Pcs>::memory_checking(
+    LassoVerifier::<Fr, Pcs>::memory_checking(
         unified_num_vars, // num_reads
-        output_poly_commitment_idx, // Base PCS index for Dims, ReadTs, FinalCts, E_polys groups
-        memory_checking_base_point_idx_v,
+        output_poly_commitment_idx, // polys_offset - Base PCS index for Dims, ReadTs, FinalCts, E_polys groups
+        memory_checking_base_point_idx_v, // points_offset
         &mut verifier_lookup_opening_points,
         &mut verifier_lookup_opening_evals,
         &table,
         &gamma_v,
         &beta_v, // tau is beta
+        unified_num_vars, // unified_num_vars
         &mut transcript_v,
-    );
-    if memory_checking_result.is_err() {
-        println!("Verifier: Memory-checking verify failed.");
-        return;
-    }
-    println!("Verifier: Memory-checking verify done.");
+    ).unwrap();
 
-    // Sentinel after LassoVerifier::memory_checking
-    let sentinel_v4: F = transcript_v.squeeze_challenge();
-    println!("Verifier Sentinel 4: {:?}", sentinel_v4);
+    let _sentinel_v4: Fr = transcript_v.squeeze_challenge();
 
     // 5. Verifier: PCS Batch Verify
     // Print verifier's opening points, evaluations, and commitments
@@ -887,6 +883,21 @@ mod tests {
     fn test_lasso_interface_by_k_with_ratio() {
         let timings = test_lasso_by_k_with_ratio(4, 4); // N:n = 4:1 ratio
         println!("Lasso by K=4, ratio=4 Timings:");
+        for timing in &timings {
+            println!("  {}", timing);
+        }
+        // Verify that we got timing results
+        assert!(timings.len() >= 3); // Setup, Prove, Verify (minimum)
+        assert!(timings.iter().any(|t| t.contains("Setup")));
+        assert!(timings.iter().any(|t| t.contains("Prove")));
+        assert!(timings.iter().any(|t| t.contains("Verify")));
+    }
+    
+    #[test]
+    fn test_lasso_k8_debug() {
+        println!("Testing Lasso with k=8 to trigger debug output");
+        let timings = test_lasso_by_k_with_ratio(8, 2); // This should trigger the debug case
+        println!("Lasso by K=8, ratio=2 Timings:");
         for timing in &timings {
             println!("  {}", timing);
         }

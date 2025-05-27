@@ -171,6 +171,7 @@ impl<
         table: &Box<dyn DecomposableTable<F>>,
         gamma: &F,
         tau: &F,
+        unified_num_vars: usize,
         transcript: &mut impl FieldTranscriptRead<F>,
     ) -> Result<(), Error> {
         let memory_checking = Self::prepare_memory_checking(table);
@@ -186,6 +187,7 @@ impl<
                     instance_points_offset,
                     &gamma,
                     &tau,
+                    unified_num_vars,
                     lookup_opening_points,
                     lookup_opening_evals,
                     transcript,
