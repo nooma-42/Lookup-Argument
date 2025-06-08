@@ -1,20 +1,16 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{self, baloo, cq, logupgkr, plookup, lasso};
+use plonkish_backend::backend::{cq, logupgkr, plookup, lasso};
 use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
-use plonkish_backend::pcs::{univariate::UnivariateKzg, multilinear::MultilinearKzg};
-use plonkish_backend::util::arithmetic::PrimeField;
-use plonkish_backend::util::transcript::Keccak256Transcript;
+use plonkish_backend::pcs::univariate::UnivariateKzg;
 use regex::Regex;
 use std::collections::HashMap;
 use std::{
     env::args,
-    fmt::{write, Display},
+    fmt::Display,
     fs::{create_dir, File, OpenOptions},
-    io::{stdout, Write},
-    iter,
+    io::Write,
     ops::Range,
     path::Path,
-    time::{Duration, Instant},
 };
 
 // Type alias for Plookup with BN256 curve
@@ -332,6 +328,10 @@ fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Ben
     // Warn if the requested ratio is different.
     if n_to_n_ratio != 2 && (verbose || debug) {
             println!("WARN: Caulk benchmark currently uses a fixed N:n ratio of 2, ignoring provided ratio {}", n_to_n_ratio);
+    }
+
+    if verbose || debug {
+        println!("Running Caulk benchmark with k={}", k);
     }
 
     // Capture and redirect detailed output if not verbose
