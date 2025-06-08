@@ -87,33 +87,64 @@ impl<F: Field> UnivariatePolynomial<F> {
         self.coeffs().len().checked_sub(1).unwrap_or_default()
     }
 
-    pub fn compose(&self, other: &Self) -> Self {
+    pub fn compose(&self, other: &Self) -> Self
+    where
+        F: Field + WithSmallOrderMulGroup<3>,
+    {
         assert_eq!(self.basis, Monomial);
         assert_eq!(other.basis, Monomial);
 
         if self.is_empty() {
             return Self::zero();
         }
-
-        // Start with constant term
-        let mut result = Self::monomial(vec![self.coeffs[0]]);
-        if self.coeffs.len() == 1 {
-            return result;
+        if self.degree() == 0 {
+            // Composing a constant is just the constant itself.
+            return self.clone();
         }
 
-        // Compute powers of other polynomial
-        let mut power = other.clone();
+        // --- High-Performance Composition using evaluation-interpolation ---
 
-        // Add each term: coefficient * other^i
-        for coeff in self.coeffs.iter().skip(1) {
-            if !coeff.is_zero_vartime() {
-                let term = &power * coeff;
-                result += term;
+        // 1. Determine the size of the evaluation domain needed.
+        // The degree of self(other(X)) is deg(self) * deg(other).
+        let result_degree = self.degree() * other.degree();
+        let domain_size = (result_degree + 1).next_power_of_two();
+        let log_domain_size = domain_size.trailing_zeros() as usize;
+        let omega = root_of_unity(log_domain_size);
+
+        // 2. Evaluate other(X) on this large domain.
+        let mut other_evals = other.coeffs.clone();
+        other_evals.resize(domain_size, F::ZERO);
+        radix2_fft(&mut other_evals, omega, log_domain_size);
+
+        // 3. Evaluate self(y) for each y in other_evals.
+        // This is the most complex step. We can't just FFT `self` because the points (other_evals) are not roots of unity.
+        // We need to perform a multi-point evaluation.
+        // A simple (but still faster than Horner) way is to parallelize the evaluations.
+        let mut result_evals = vec![F::ZERO; domain_size];
+        parallelize(&mut result_evals, |(chunk, start)| {
+            for (i, res) in chunk.iter_mut().enumerate() {
+                // horner evaluation is efficient enough here since deg(self) is small (m)
+                *res = horner(&self.coeffs, &other_evals[start + i]);
             }
-            power = &power * other;
-        }
+        });
 
-        result
+        // 4. Interpolate the result_evals back to a coefficient-form polynomial.
+        let mut result_coeffs = result_evals;
+        let omega_inv = root_of_unity_inv(log_domain_size);
+        radix2_fft(&mut result_coeffs, omega_inv, log_domain_size);
+
+        // Scale by 1/domain_size
+        let domain_size_inv = F::from(domain_size as u64).invert().unwrap();
+        parallelize(&mut result_coeffs, |(chunk, _)| {
+            for coeff in chunk.iter_mut() {
+                *coeff *= domain_size_inv;
+            }
+        });
+
+        // Truncate to the correct degree
+        result_coeffs.truncate(result_degree + 1);
+        
+        Self::monomial(result_coeffs)
     }
 }
 
@@ -205,6 +236,24 @@ impl<F: Field> UnivariatePolynomial<F> {
             |((result, coeffs), scalar)| *result = horner(coeffs, x) * scalar,
         );
         results.iter().fold(F::ZERO, |acc, result| acc + result)
+    }
+
+    pub fn derivative(&self) -> Self
+    where
+        F: PrimeField,
+    {
+        assert_eq!(self.basis, Monomial);
+
+        if self.coeffs.len() <= 1 {
+            return Self::zero();
+        }
+
+        let mut derivative_coeffs = Vec::new();
+        for (i, &coeff) in self.coeffs.iter().enumerate().skip(1) {
+            derivative_coeffs.push(coeff * F::from(i as u64));
+        }
+
+        Self::monomial(derivative_coeffs)
     }
 
     pub fn div_rem(&self, divisor: &Self) -> (Self, Self) {

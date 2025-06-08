@@ -33,7 +33,7 @@ fn main() {
                 println!("→ Running {} benchmark with k = {}, N:n ratio = {}", system.to_string(), k, n_to_n_ratio);
             }
 
-            let result = system.bench(k, n_to_n_ratio, verbose, debug, false);
+            let result = system.bench(k, n_to_n_ratio, verbose, debug);
             all_results.push(result);
         })
     });
@@ -323,50 +323,33 @@ fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> B
     }
 }
 
-fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool, optimized: bool) -> BenchmarkResult {
+fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Note: Caulk's test_caulk_by_k currently uses a fixed N:n ratio of 2 internally.
     // Warn if the requested ratio is different.
     if n_to_n_ratio != 2 && (verbose || debug) {
             println!("WARN: Caulk benchmark currently uses a fixed N:n ratio of 2, ignoring provided ratio {}", n_to_n_ratio);
     }
 
-    // Choose which version to run based on optimized flag
-    let version_name = if optimized { "Optimized Caulk" } else { "Caulk" };
-    
     if verbose || debug {
-        println!("Running {} benchmark with k={}", version_name, k);
+        println!("Running Caulk benchmark with k={}", k);
     }
 
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        if optimized {
-            with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_optimized_by_k(k))
-        } else {
-            with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k))
-        }
+        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k))
     } else {
-        if optimized {
-            plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_optimized_by_k(k)
-        } else {
-            plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k)
-        }
+        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k)
     };
 
-    // Write results to file with version indicator
-    let output_file = if optimized { 
-        &mut System::CaulkOptimized.output() 
-    } else { 
-        &mut System::Caulk.output() 
-    };
-    
+    // Write results to file
     for timing in &timings {
-        writeln!(output_file, "{}", timing).unwrap();
+        writeln!(&mut System::Caulk.output(), "{}", timing).unwrap();
     }
 
     let all_timings = timings.join("\n");
 
     if debug {
-        println!("\nDEBUG: {} raw timing output:", version_name);
+        println!("\nDEBUG: Caulk raw timing output:");
         println!("{}", all_timings);
     }
 
@@ -377,14 +360,14 @@ fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool, optimi
 
     if verbose || debug {
         println!(
-            "{} times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
-            version_name, setup_time, prove_time, verify_time
+            "Caulk times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms",
+            setup_time, prove_time, verify_time
         );
     }
 
-    // Return structured benchmark result with appropriate system type
+    // Return structured benchmark result
     BenchmarkResult {
-        system: if optimized { System::CaulkOptimized } else { System::Caulk },
+        system: System::Caulk,
         k_value: k,
         // Store the requested ratio, even if the underlying function doesn't use it yet.
         n_to_n_ratio,
@@ -690,13 +673,12 @@ enum System {
     LogupGKR,
     Plookup,
     Caulk,
-    CaulkOptimized,
     Lasso,
 }
 
 impl System {
     fn all() -> Vec<Self> {
-        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk, System::CaulkOptimized, System::Lasso]
+        vec![System::CQ, System::Baloo, System::LogupGKR, System::Plookup, System::Caulk, System::Lasso]
     }
 
     fn output_path(&self) -> String {
@@ -711,14 +693,13 @@ impl System {
     }
 
     // Benchmark a system with k value and N:n ratio
-    fn bench(&self, k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool, optimized: bool) -> BenchmarkResult {
+    fn bench(&self, k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
         match self {
             System::Baloo => bench_baloo(k, n_to_n_ratio, verbose, debug),
             System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
             System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
             System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
-            System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug, false),
-            System::CaulkOptimized => bench_caulk(k, n_to_n_ratio, verbose, debug, true),
+            System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
             System::Lasso => bench_lasso(k, n_to_n_ratio, verbose, debug),
         }
     }
@@ -732,7 +713,6 @@ impl Display for System {
             System::LogupGKR => write!(f, "LogupGKR"),
             System::Plookup => write!(f, "Plookup"),
             System::Caulk => write!(f, "Caulk"),
-            System::CaulkOptimized => write!(f, "CaulkOpt"),
             System::Lasso => write!(f, "Lasso"),
         }
     }
@@ -757,11 +737,9 @@ fn parse_args() -> (Vec<System>, Range<usize>, usize, bool, OutputFormat, bool) 
                         "Plookup" => systems.push(System::Plookup),
                         "caulk" => systems.push(System::Caulk),
                         "Caulk" => systems.push(System::Caulk),
-                        "caulk-opt" | "caulk-optimized" => systems.push(System::CaulkOptimized),
-                        "CaulkOpt" | "CaulkOptimized" => systems.push(System::CaulkOptimized),
                         "lasso" => systems.push(System::Lasso),
                         "Lasso" => systems.push(System::Lasso),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk, caulk-opt, lasso}}"),
+                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk, lasso}}"),
                     },
 
                     "--k" => {

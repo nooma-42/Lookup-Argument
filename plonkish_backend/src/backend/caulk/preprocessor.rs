@@ -1,15 +1,17 @@
+// src/preprocessor.rs
+
 use crate::pcs::univariate::{
     UnivariateKzg, UnivariateKzgParam, UnivariateKzgProverParam, UnivariateKzgVerifierParam,
 };
 use crate::pcs::PolynomialCommitmentScheme;
 use crate::poly::univariate::UnivariatePolynomial;
-use crate::util::arithmetic::{Field, root_of_unity, root_of_unity_inv, WithSmallOrderMulGroup, radix2_fft};
+use crate::util::arithmetic::{radix2_fft, root_of_unity, root_of_unity_inv, Field, WithSmallOrderMulGroup};
 use crate::Error;
+use halo2_curves::ff::PrimeField;
+use halo2_curves::group::prime::PrimeCurveAffine;
+use halo2_curves::group::Group;
 use halo2_curves::pairing::MultiMillerLoop;
 use halo2_curves::CurveAffine;
-use halo2_curves::ff::PrimeField;
-use halo2_curves::group::Group;
-use halo2_curves::group::prime::PrimeCurveAffine;
 use rand::rngs::OsRng;
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::max;
@@ -17,57 +19,58 @@ use std::fmt::Debug;
 
 use super::{CaulkProverParam, CaulkVerifierParam};
 
-pub fn setup<
-    M: MultiMillerLoop + Debug + Sync,
->(
+// A helper function to determine a safe degree bound for the SRS,
+// closely following the logic of the original arkworks implementation.
+fn get_degree_bound(n: usize, m: usize) -> usize {
+    // The degree of H2(X) and related polynomials can be up to O(m^2).
+    // The composition of blinded polynomials like c_I(u(X)) can lead to degrees
+    // around m^2 + O(m). For example, (m+2)*(m+2) = m^2+4m+4.
+    // We need a bound that covers this.
+    // 2*m*m is a safe upper bound used by the original implementation.
+    let m_squared_bound = 2 * m.saturating_mul(m);
+
+    // Let's add a small constant padding to handle potential off-by-one degree issues
+    // from combinations of blinding factors, especially in small cases.
+    let padding = 8;
+    
+    // The degree bound must be at least N to commit to C(X).
+    // We also enforce a minimum degree to handle very small test cases,
+    // ensuring there's enough room for blinding polynomials.
+    let min_degree = 64; // Increased minimum degree to be safer.
+
+    max(n, m_squared_bound + padding).max(min_degree)
+}
+
+
+pub fn setup<M: MultiMillerLoop + Debug + Sync>(
     N: usize,
     m: usize,
 ) -> Result<(CaulkProverParam<M>, CaulkVerifierParam<M>), Error>
 where
-    M::Scalar: Serialize + DeserializeOwned,
+    M::Scalar: Serialize + DeserializeOwned + WithSmallOrderMulGroup<3>,
     M::G1Affine: Serialize + DeserializeOwned,
     M::G2Affine: Serialize + DeserializeOwned,
 {
-    // N: size of the commitment vector 'c' (table size)
-    // m: size of the lookup values vector 'values'
     let mut rng = OsRng;
-    // Determine the required polynomial degree for KZG based on N and m.
-    // Key polynomials and their degrees:
-    // - C(X), phi(X): degree N-1, m-1 respectively
-    // - z_I(X): degree unique_positions.len() (bounded by m) 
-    // - c_I(X): degree roughly N/2 + 3 (blinding degree)
-    // - u(X): degree m-1
-    // - c_I(u(X)): degree (N/2 + 3) * (m-1) 
-    // - z_I(u(X)): degree unique_positions.len() * (m-1), bounded by m * (m-1)
-    // - H2_poly: max degree of composition polynomials
-    
-    // Conservative upper bound: account for all polynomial operations
-    let base_degree = N.max(m);
-    let composition_degree = base_degree * m; // Upper bound for compositions like c_I(u(X))
-    let blinding_degree = 7; // We use 7 blinding factors
-    let max_degree = composition_degree + blinding_degree;
-    
-    // Ensure minimum size for small examples
-    let poly_size = max_degree.max(8).next_power_of_two(); // Minimum 8, then next power of 2
 
-    // The blinding factor count seems to be 0 in the original Caulk setup/trim calls.
+    // Use a robust method to determine the SRS size.
+    let degree_bound = get_degree_bound(N, m);
+    let poly_size = degree_bound.next_power_of_two();
+    
     let blinding_factors = 0;
     let kzg_param = UnivariateKzg::<M>::setup(poly_size, blinding_factors, &mut rng)?;
     let (kzg_pp, kzg_vp) = UnivariateKzg::<M>::trim(&kzg_param, poly_size, blinding_factors)?;
+    
     Ok((
         CaulkProverParam {
-            kzg_param: kzg_param.clone(), // Clone kzg_param as it's needed by prover
+            kzg_param: kzg_param.clone(),
             kzg_pp,
         },
-        CaulkVerifierParam { kzg_vp, m }, // Store m in VerifierParam
+        CaulkVerifierParam { kzg_vp, m },
     ))
 }
 
-/// Preprocess with optimized H1_com calculation using FK-style precomputation
-/// This generates precomputed G2 KZG openings for C(X) at all N-th roots of unity
-pub fn preprocess_with_table<
-    M: MultiMillerLoop + Debug + Sync,
->(
+pub fn preprocess_with_table<M: MultiMillerLoop + Debug + Sync>(
     N: usize,
     m: usize,
     table: &[M::Scalar],
@@ -78,22 +81,23 @@ where
     M::G2Affine: Serialize + DeserializeOwned + CurveAffine<ScalarExt = M::Scalar>,
 {
     assert_eq!(table.len(), N, "Table size must match N");
-    assert!(N.is_power_of_two(), "N must be a power of two for efficient FK computation");
-    
-    let mut rng = OsRng;
-    let base_degree = N.max(m);
-    let composition_degree = base_degree * m;
-    let blinding_degree = 7;
-    let max_degree = composition_degree + blinding_degree;
-    let poly_size = max_degree.max(8).next_power_of_two();
+    assert!(
+        N.is_power_of_two(),
+        "N must be a power of two for efficient FK computation"
+    );
 
+    let mut rng = OsRng;
+    
+    // Use the same robust method to determine the SRS size.
+    let degree_bound = get_degree_bound(N, m);
+    let poly_size = degree_bound.next_power_of_two();
+    
     let blinding_factors = 0;
     let kzg_param = UnivariateKzg::<M>::setup(poly_size, blinding_factors, &mut rng)?;
     let (kzg_pp, kzg_vp) = UnivariateKzg::<M>::trim(&kzg_param, poly_size, blinding_factors)?;
-    
-    // Precompute G2 KZG openings for C(X) using FK-style algorithm
+
     let precomputed_g2_openings = precompute_c_openings_g2_optimized::<M>(&kzg_param, table)?;
-    
+
     Ok((
         CaulkProverParam {
             kzg_param: kzg_param.clone(),
@@ -103,6 +107,8 @@ where
         precomputed_g2_openings,
     ))
 }
+
+// ... The rest of the file remains the same ...
 
 /// Optimized FK-style computation using existing FFT library
 /// This implements the circulant matrix approach with G2 FFT operations
@@ -115,15 +121,17 @@ where
     M::G2Affine: CurveAffine<ScalarExt = M::Scalar>,
 {
     let N = table.len();
-    assert!(N.is_power_of_two(), "Table size must be power of two for FK algorithm");
-    
+    assert!(
+        N.is_power_of_two(),
+        "Table size must be power of two for FK algorithm"
+    );
+
     // Convert table to polynomial coefficients using existing FFT
     let c_poly = UnivariatePolynomial::lagrange(table.to_vec()).ifft();
     let mut c_coeffs = c_poly.coeffs().to_vec();
-    
-    // Pad coefficients to next power of two if needed
-    let padded_size = c_coeffs.len().next_power_of_two();
-    c_coeffs.resize(padded_size, M::Scalar::ZERO);
+
+    // Pad coefficients to match domain size N
+    c_coeffs.resize(N, M::Scalar::ZERO);
     
     // Try to use FK algorithm with existing FFT library
     if let Ok(result) = fk_g2::<M>(&mut c_coeffs, kzg_param) {
@@ -228,25 +236,24 @@ where
     // Right hand side: G2_FFT(inv_g2_powers) using radix2_fft
     let mut rhs = inv_g2_powers.iter().map(|x| (*x).into()).collect::<Vec<M::G2>>();
     radix2_fft(&mut rhs, omega, log_size);
-    let rhs: Vec<M::G2Affine> = rhs.into_iter().map(|x| x.into()).collect();
     
     // Middle hand side: FFT(first_col) using radix2_fft
     let mut mhs = first_col;
     radix2_fft(&mut mhs, omega, log_size);
     
     // Element-wise multiplication in frequency domain
-    let m_r_hs: Vec<M::G2Affine> = rhs
+    let m_r_hs: Vec<M::G2> = rhs
         .iter()
         .zip(mhs.iter())
         .map(|(&r, &m)| {
-            let mut result: M::G2 = r.into();
+            let mut result = r;
             result *= m;
-            result.into()
+            result
         })
         .collect();
     
     // Step 4: Inverse G2 FFT using radix2_fft
-    let mut result = m_r_hs.iter().map(|x| (*x).into()).collect::<Vec<M::G2>>();
+    let mut result = m_r_hs;
     radix2_fft(&mut result, omega_inv, log_size);
     
     // Apply IFFT scaling
@@ -275,8 +282,7 @@ where
 }
 
 
-
 /// Helper function to check if a number is power of two
 fn is_power_of_two(n: usize) -> bool {
     (n & (n - 1)) == 0 && n != 0
-} 
+}
