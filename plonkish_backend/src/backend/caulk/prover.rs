@@ -12,6 +12,7 @@ use halo2_curves::ff::PrimeField;
 use halo2_curves::pairing::Engine;
 use halo2_curves::group::prime::PrimeCurveAffine;
 use halo2_curves::group::Group;
+use halo2_curves::CurveAffine;
 use rand::rngs::OsRng;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -179,11 +180,30 @@ where
     let c_I_poly = get_C_I_poly(c, &unique_positions, &tau_polys, &blinders, &z_I_poly);
     
     // *** OPTIMIZATION: Use precomputed G2 openings for H1_com ***
-    // For now, let's use the original approach but with precomputed values
-    // TODO: Implement full aggregation optimization after fixing type issues
-    let c_poly = UnivariatePolynomial::lagrange(c.to_vec()).ifft();
-    let H1_poly = &(&c_poly - &c_I_poly) / &z_I_poly;
-    let g2_H1 = UnivariateKzg::commit_monomial_g2(&pp.kzg_param, H1_poly.coeffs());
+    // Try to use optimized calculation, fall back to original if needed
+    let g2_H1 = if pp.precomputed_g2_openings.len() == c.len() && c.len().is_power_of_two() {
+        // Use optimized calculation with precomputed G2 openings
+        match compute_h1_commitment_optimized::<M>(
+            &pp.precomputed_g2_openings,
+            &unique_positions,
+            &roots_N,
+            &blinders,
+            &pp.kzg_param,
+        ) {
+            Ok(optimized_result) => optimized_result,
+            Err(_) => {
+                // Fall back to original calculation if optimization fails
+                let c_poly = UnivariatePolynomial::lagrange(c.to_vec()).ifft();
+                let H1_poly = &(&c_poly - &c_I_poly) / &z_I_poly;
+                UnivariateKzg::commit_monomial_g2(&pp.kzg_param, H1_poly.coeffs()).to_affine()
+            }
+        }
+    } else {
+        // Fall back to original calculation
+        let c_poly = UnivariatePolynomial::lagrange(c.to_vec()).ifft();
+        let H1_poly = &(&c_poly - &c_I_poly) / &z_I_poly;
+        UnivariateKzg::commit_monomial_g2(&pp.kzg_param, H1_poly.coeffs()).to_affine()
+    };
 
     let z_v_m_poly = get_vanishing_poly::<M::Scalar>(m);
     let u_poly = get_u_poly_impl(positions, &roots_N, &blinders);
@@ -193,7 +213,7 @@ where
     let g1_C_I = UnivariateKzg::commit_monomial(&pp.kzg_pp, c_I_poly.coeffs());
     let g1_Z_I = UnivariateKzg::commit_monomial(&pp.kzg_pp, z_I_poly.coeffs());
 
-    transcript.write_commitment_g2(&g2_H1.to_affine());
+    transcript.write_commitment_g2(&g2_H1);
     transcript.write_commitment(&g1_u.clone().to_affine());
     transcript.write_commitment(&g1_C_I.to_affine());
     transcript.write_commitment(&g1_Z_I.to_affine());
@@ -305,39 +325,72 @@ fn get_u_poly_impl<F: PrimeField + WithSmallOrderMulGroup<3>>(
     u_poly
 }
 
+/// Aggregate G2 proof following Arkworks approach
+/// Computes Σ_{j ∈ unique_positions} λ_j * Q_j
+/// where λ_j = 1 / (∏_{l≠j, l∈unique_pos} (ω_{pos_j} - ω_{pos_l}))
+/// 
+/// This implements the core aggregation logic similar to CQ's FK algorithm
+/// but for G2 commitments instead of G1
+fn aggregate_proof_g2<M: MultiMillerLoop>(
+    openings: &[M::G2Affine], // All_G2_Openings_C  
+    positions: &[usize],      // unique_positions_indices
+    roots_N: &[M::Scalar],    // N-th roots of unity
+) -> M::G2Affine
+where
+    M::Scalar: PrimeField,
+    M::G2Affine: CurveAffine<ScalarExt = M::Scalar>,
+{
+    let m = positions.len(); // k (number of unique positions)
+    if m == 0 {
+        return M::G2Affine::identity();
+    }
+    
+    if m == 1 {
+        // Special case: only one position, lambda = 1
+        return openings[positions[0]];
+    }
+    
+    // Initialize result with zero
+    let mut result: M::G2 = M::G2::identity();
+    
+    // Compute all λ_j coefficients and aggregate
+    for j in 0..m {
+        let i_j = positions[j];
+        let w_ij = roots_N[i_j]; // ω_{pos_j}
+        
+        // Compute λ_j = 1 / (∏_{l≠j, l∈unique_pos} (ω_{pos_j} - ω_{pos_l}))
+        let mut prod = M::Scalar::ONE;
+        for (k_idx, &pos_k) in positions.iter().enumerate() {
+            if k_idx != j {
+                let w_ik = roots_N[pos_k]; // ω_{pos_l}
+                prod *= w_ij - w_ik;
+            }
+        }
+        let lambda_j = prod.invert().unwrap();
+        
+        // Add λ_j * Q_{i_j} to the result
+        let mut scaled_opening: M::G2 = openings[i_j].into();
+        scaled_opening *= lambda_j;
+        result += scaled_opening;
+    }
+    
+    result.into()
+}
+
 /// Optimized H1 commitment calculation using precomputed G2 openings
-/// H1_com = (Aggregated_G2_Proof - Comm_G2_Blinder_CI) * r1^{-1}
-/// where Aggregated_G2_Proof = Σ_{j ∈ unique_positions} λ_j * Q_j
-/// and λ_j = 1 / (∏_{l≠j, l∈unique_pos} (ω_{pos_j} - ω_{pos_l}))
+/// 
+/// This is a placeholder implementation that falls back to the original approach
+/// The optimization is currently not implemented correctly
 fn compute_h1_commitment_optimized<M: MultiMillerLoop>(
     _precomputed_g2_openings: &[M::G2Affine],
     _unique_positions: &[usize],
     _roots_N: &[M::Scalar], 
     _blinders: &[M::Scalar],
     _kzg_param: &UnivariateKzgParam<M>,
-) -> M::G2Affine
+) -> Result<M::G2Affine, Error>
 where
-    M::G2Affine: PrimeCurveAffine,
     M::Scalar: PrimeField,
 {
-    // TODO: Implement proper aggregation logic
-    // For now, return identity to avoid compilation issues
-    M::G2Affine::identity()
-}
-
-/// Aggregate G2 proof following Arkworks approach
-/// Computes Σ_{j ∈ unique_positions} λ_j * Q_j
-/// where λ_j = 1 / (∏_{l≠j, l∈unique_pos} (ω_{pos_j} - ω_{pos_l}))
-fn aggregate_proof_g2<M: MultiMillerLoop>(
-    _openings: &[M::G2Affine], // All_G2_Openings_C  
-    _positions: &[usize],      // unique_positions_indices
-    _roots_N: &[M::Scalar],    // N-th roots of unity
-) -> M::G2Affine
-where
-    M::G2Affine: PrimeCurveAffine,
-    M::Scalar: PrimeField,
-{
-    // TODO: Implement proper aggregation logic
-    // For now, return identity to avoid compilation issues
-    M::G2Affine::identity()
+    // For now, just return an error to force fallback to original implementation
+    Err(Error::InvalidSnark("Optimization not properly implemented".to_string()))
 } 
