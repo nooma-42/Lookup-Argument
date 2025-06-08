@@ -26,17 +26,23 @@ where
     // m: size of the lookup values vector 'values'
     let mut rng = OsRng;
     // Determine the required polynomial degree for KZG based on N and m.
-    // Need to commit polynomials up to degree N-1 (for C(X)) and potentially others related to m.
-    // Crucially, the prover computes compositions like c_I(u(X)), which drastically increase degree.
-    // deg(c_I) is roughly N/2 + blinding_degree (e.g., 3)
-    // deg(u) is m-1
-    // deg(c_I(u(X))) is roughly (N/2 + 3) * (m-1)
-    // H2_poly = (z_I(u(X)) + (c_I(u(X)) - phi(X))*chi) / Z_v_m(X)
-    // Degree of H2 is roughly deg(c_I(u(X))) - deg(Z_v_m) = (N/2+3)*(m-1) - m
-    let max_degree_composition = ((N / 2).max(1) + 3) * (m.max(1) - 1); // Approximate max degree from composition
-    let max_degree_h2 = max_degree_composition.saturating_sub(m);
-    let max_degree_commit = max(N.max(1) - 1, max_degree_h2); // Consider C(X), phi(X) (m-1), H1 (~N/2), H2, p1, p2, u
-    let poly_size = (max_degree_commit + 1).next_power_of_two(); // Degree bound for KZG setup
+    // Key polynomials and their degrees:
+    // - C(X), phi(X): degree N-1, m-1 respectively
+    // - z_I(X): degree unique_positions.len() (bounded by m) 
+    // - c_I(X): degree roughly N/2 + 3 (blinding degree)
+    // - u(X): degree m-1
+    // - c_I(u(X)): degree (N/2 + 3) * (m-1) 
+    // - z_I(u(X)): degree unique_positions.len() * (m-1), bounded by m * (m-1)
+    // - H2_poly: max degree of composition polynomials
+    
+    // Conservative upper bound: account for all polynomial operations
+    let base_degree = N.max(m);
+    let composition_degree = base_degree * m; // Upper bound for compositions like c_I(u(X))
+    let blinding_degree = 7; // We use 7 blinding factors
+    let max_degree = composition_degree + blinding_degree;
+    
+    // Ensure minimum size for small examples
+    let poly_size = max_degree.max(8).next_power_of_two(); // Minimum 8, then next power of 2
 
     // The blinding factor count seems to be 0 in the original Caulk setup/trim calls.
     let blinding_factors = 0;

@@ -53,13 +53,13 @@ where
     pub fn prove(
         pp: &CaulkProverParam<M>,
         c: &[M::Scalar],
-        values: &[M::Scalar],
+        positions: &[usize],
         transcript: &mut (impl TranscriptWrite<M::G1Affine, M::Scalar>
                       + G2TranscriptWrite<M::G2Affine, M::Scalar>
                       + FieldTranscriptWrite<M::Scalar>),
     ) -> Result<(), Error>
     {
-        prover::prove::<M>(pp, c, values, transcript)
+        prover::prove::<M>(pp, c, positions, transcript)
     }
 
     pub fn verify(
@@ -70,6 +70,18 @@ where
     ) -> Result<(), Error>
     {
         verifier::verify::<M>(vp, transcript)
+    }
+
+    // Helper function to convert values to positions (for compatibility with existing tests)
+    fn values_to_positions<F: PartialEq>(c: &[F], values: &[F]) -> Vec<usize> {
+        values
+            .iter()
+            .map(|value| {
+                c.iter()
+                    .position(|x| x == value)
+                    .expect("Value from lookup set must exist in the table")
+            })
+            .collect()
     }
 
     // Run the full Caulk protocol with table and lookup generated based on k
@@ -95,9 +107,10 @@ where
 
         // 2. Prove
         let start = std::time::Instant::now();
+        let positions = Self::values_to_positions(&c, &values);
         let proof = {
             let mut transcript = Keccak256Transcript::new(());
-            Caulk::<Bn256>::prove(&pp, &c[..], &values[..], &mut transcript)
+            Caulk::<Bn256>::prove(&pp, &c[..], &positions, &mut transcript)
                 .expect("Prove should not fail");
             transcript.into_proof()
         };
@@ -136,9 +149,10 @@ where
 
         // 2. Prove
         let start = std::time::Instant::now();
+        let positions = Self::values_to_positions(c, values);
         let proof = {
             let mut transcript = Keccak256Transcript::new(());
-            Caulk::<Bn256>::prove(&pp, c, values, &mut transcript)
+            Caulk::<Bn256>::prove(&pp, c, &positions, &mut transcript)
                 .expect("Prove should not fail");
             transcript.into_proof()
         };
@@ -170,9 +184,44 @@ where
 
         // 1. Prove
         let start = std::time::Instant::now();
+        let positions = Self::values_to_positions(c, values);
         let proof = {
             let mut transcript = Keccak256Transcript::new(());
-            Caulk::<Bn256>::prove(pp, c, values, &mut transcript)
+            Caulk::<Bn256>::prove(pp, c, &positions, &mut transcript)
+                .expect("Prove should not fail");
+            transcript.into_proof()
+        };
+        let duration_prove = start.elapsed();
+        timings.push(format!("Prove: {}ms", duration_prove.as_millis()));
+
+        // 2. Verify
+        let start = std::time::Instant::now();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+        Caulk::<Bn256>::verify(vp, &mut transcript).expect("Verify should not fail");
+        let duration_verify = start.elapsed();
+        timings.push(format!("Verify: {}ms", duration_verify.as_millis()));
+
+        let total_duration = start_total.elapsed();
+        timings.push(format!("Prove+Verify time: {}ms", total_duration.as_millis()));
+
+        timings
+    }
+
+    // Run Caulk prove and verify steps with positions directly (optimized version)
+    pub fn test_caulk_with_positions(
+        pp: &CaulkProverParam<Bn256>,
+        vp: &CaulkVerifierParam<Bn256>,
+        c: &[<Bn256 as Engine>::Scalar],
+        positions: &[usize],
+    ) -> Vec<String> {
+        let mut timings: Vec<String> = vec![];
+        let start_total = std::time::Instant::now();
+
+        // 1. Prove
+        let start = std::time::Instant::now();
+        let proof = {
+            let mut transcript = Keccak256Transcript::new(());
+            Caulk::<Bn256>::prove(pp, c, positions, &mut transcript)
                 .expect("Prove should not fail");
             transcript.into_proof()
         };
@@ -215,9 +264,12 @@ mod tests {
 
         let (pp, vp) = TestCaulk::setup(N, m).expect("Setup should not fail");
 
+        // Convert values to positions: [1, 2] -> [0, 2] (positions in table [1, 3, 2, 4])
+        let positions = TestCaulk::values_to_positions(&c, &values);
+
         let proof = {
             let mut prover_transcript = Keccak256Transcript::new(());
-            TestCaulk::prove(&pp, &c[..], &values[..], &mut prover_transcript)
+            TestCaulk::prove(&pp, &c[..], &positions, &mut prover_transcript)
                 .expect("Prove should not fail");
             prover_transcript.into_proof()
         };
@@ -259,6 +311,23 @@ mod tests {
     fn test_caulk_by_k() {
         let timings = TestCaulk::test_caulk_by_k(4);
         println!("Caulk by K Timings:");
+        for timing in timings {
+            println!("  {}", timing);
+        }
+    }
+
+    #[test]
+    fn test_caulk_with_positions() {
+        let c = scalars(&[1, 3, 2, 4]); // Table N=4: positions [0, 1, 2, 3]
+        let positions = vec![0, 2]; // Direct positions for values [1, 2]
+        let N = c.len();
+        let m = positions.len();
+
+        // Pre-generate params
+        let (pp, vp) = TestCaulk::setup(N, m).expect("Setup should not fail");
+
+        let timings = TestCaulk::test_caulk_with_positions(&pp, &vp, &c, &positions);
+        println!("Caulk with Direct Positions Timings (Optimized):");
         for timing in timings {
             println!("  {}", timing);
         }

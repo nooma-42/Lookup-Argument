@@ -23,7 +23,7 @@ pub fn prove<
 >(
     pp: &CaulkProverParam<M>,
     c: &[M::Scalar],
-    values: &[M::Scalar],
+    positions: &[usize],
     transcript: &mut (impl TranscriptWrite<M::G1Affine, M::Scalar>
                   + G2TranscriptWrite<M::G2Affine, M::Scalar>
                   + FieldTranscript<M::Scalar>),
@@ -35,27 +35,24 @@ where
 {
     let N = c.len();
     let roots_N = get_roots::<M::Scalar>(N);
-    let m = values.len();
-    // let roots_m = get_roots::<M::Scalar>(m); // roots_m seem unused in original code
+    let m = positions.len();
 
     // Prepare C(X)
     let C_poly = UnivariatePolynomial::lagrange(c.to_vec()).ifft();
     let g1_C = UnivariateKzg::commit_monomial(&pp.kzg_pp, C_poly.coeffs());
     transcript.write_commitment(&g1_C.to_affine());
 
+    // Construct values from positions and table c
+    let values: Vec<M::Scalar> = positions.iter().map(|&pos| {
+        if pos >= N {
+            panic!("Position {} is out of bounds for table of size {}", pos, N);
+        }
+        c[pos]
+    }).collect();
+
     let phi_poly = UnivariatePolynomial::lagrange(values.to_vec()).ifft();
     let cm = UnivariateKzg::commit_monomial(&pp.kzg_pp, phi_poly.coeffs());
     transcript.write_commitment(&cm.to_affine());
-
-    // Calculate original positions (length m, potentially with duplicates)
-    let positions: Vec<usize> = values
-        .iter()
-        .map(|value| {
-            c.iter()
-                .position(|x| x == value)
-                .expect("Value from lookup set must exist in the table")
-        })
-        .collect();
 
     // Derive unique positions from the original positions list
     let unique_positions: Vec<usize> = positions
@@ -75,7 +72,7 @@ where
     let c_poly = UnivariatePolynomial::lagrange(c.to_vec()).ifft();
     let H1_poly = &(&c_poly - &c_I_poly) / &z_I_poly;
     let z_v_m_poly = get_vanishing_poly::<M::Scalar>(m);
-    let u_poly = get_u_poly_impl(&positions, &roots_N, &blinders);
+    let u_poly = get_u_poly_impl(positions, &roots_N, &blinders);
 
     // Prepare commitments
     let g2_H1 = UnivariateKzg::commit_monomial_g2(&pp.kzg_param, H1_poly.coeffs());
@@ -182,7 +179,7 @@ fn get_C_I_poly<F: PrimeField>(
 }
 
 fn get_u_poly_impl<F: PrimeField + WithSmallOrderMulGroup<3>>(
-    positions: &Vec<usize>,
+    positions: &[usize],
     roots_N: &Vec<F>,
     blinders: &Vec<F>,
 ) -> UnivariatePolynomial<F> {
