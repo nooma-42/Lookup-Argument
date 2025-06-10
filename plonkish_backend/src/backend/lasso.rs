@@ -22,6 +22,7 @@ use crate::{
         verifier::LassoVerifier,
         prover::{LassoProver, Poly},
     },
+    log_debug, log_info, debug_println,
 };
 
 pub mod memory_checking;
@@ -324,7 +325,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     ).unwrap();
 
     let _sentinel_p3: Fr = transcript_p.squeeze_challenge();
-    println!("DEBUG Prover: _sentinel_p3 = {:?}", _sentinel_p3);
+    log_debug!("Prover: _sentinel_p3 = {:?}", _sentinel_p3);
 
     // Memory checking
     let memory_checking_base_point_idx = prover_lookup_opening_points.len();
@@ -377,6 +378,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     
     let prove_duration = start_prove.elapsed();
     timings.push(format!("Prove: {}ms", prove_duration.as_millis()));
+    timings.push(format!("Proof size: {} bytes", proof_bytes.len()));
 
     // Verify phase timing
     let start_verify = Instant::now();
@@ -414,7 +416,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     ).unwrap();
 
     let _sentinel_v3: Fr = transcript_v.squeeze_challenge();
-    println!("DEBUG Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
+    log_debug!("Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
 
     // Verify memory checking
     let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();
@@ -475,16 +477,16 @@ fn run_standalone_lasso_range_check() {
     type Pcs = MultilinearKzg<Bn256>;
     type Transcript = Keccak256Transcript<F>; // Ensure this matches PCS field if necessary
 
-    println!("Standalone Lasso Range Check: Proving values are in [0, 2^{})", NUM_BITS_FOR_RANGE_CHECK);
+    log_debug!("Standalone Lasso Range Check: Proving values are in [0, 2^{})", NUM_BITS_FOR_RANGE_CHECK);
 
     // 1. Prover: Inputs
     let values_to_check: Vec<F> = vec![F::from(3u64), F::from(10u64), F::from(250u64), F::from(0u64)];
-    println!("Values to check: {:?}", values_to_check.iter().map(|f| f.to_repr().as_ref()[0]).collect::<Vec<_>>());
+    log_debug!("Values to check: {:?}", values_to_check.iter().map(|f| f.to_repr().as_ref()[0]).collect::<Vec<_>>());
 
 
     let num_lookups = values_to_check.len();
     if num_lookups == 0 {
-        println!("No values to check. Skipping.");
+        log_debug!("No values to check. Skipping.");
     }
 
     let table: Box<dyn DecomposableTable<F>> = Box::new(RangeTable::<F, NUM_BITS_FOR_RANGE_CHECK, LIMB_BITS_FOR_RANGE_CHECK>::new());
@@ -494,7 +496,7 @@ fn run_standalone_lasso_range_check() {
     let original_num_vars_for_lookups = (num_lookups as f64).log2().ceil() as usize;
     let unified_num_vars = *chunk_bits.iter().max().unwrap().max(&original_num_vars_for_lookups);
     
-    println!("Original num_vars_for_lookups: {}, chunk_bits: {:?}, unified_num_vars: {}", 
+    log_debug!("Original num_vars_for_lookups: {}, chunk_bits: {:?}, unified_num_vars: {}", 
              original_num_vars_for_lookups, chunk_bits, unified_num_vars);
     
     let padded_lookup_size = 1 << unified_num_vars;
@@ -617,14 +619,14 @@ fn run_standalone_lasso_range_check() {
         &mut transcript_p,
     );
     if sumcheck_result.is_err() {
-        println!("Prover: Sum-check prove failed.");
+        log_debug!("Prover: Sum-check prove failed.");
         return;
     }
-    println!("Prover: Sum-check prove done.");
+    log_debug!("Prover: Sum-check prove done.");
 
     // Sentinel after LassoProver::prove_sum_check
     let sentinel_p3: F = transcript_p.squeeze_challenge();
-    println!("DEBUG Prover: _sentinel_p3 = {:?}", sentinel_p3);
+    log_debug!("Prover: _sentinel_p3 = {:?}", sentinel_p3);
 
     // 5. Prover: Memory Checking
     // `points_offset` for memory checking evaluations.
@@ -793,7 +795,7 @@ fn run_standalone_lasso_range_check() {
     println!("Verifier: Sum-check verify done.");
 
     let _sentinel_v3: Fr = transcript_v.squeeze_challenge();
-    println!("DEBUG Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
+    log_debug!("Verifier: _sentinel_v3 = {:?}", _sentinel_v3);
 
     // Verify memory checking
     let memory_checking_base_point_idx_v = verifier_lookup_opening_points.len();

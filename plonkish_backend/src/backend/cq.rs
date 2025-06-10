@@ -47,10 +47,6 @@ pub fn test_cq_by_input(table: Vec<Fr>, lookup: Vec<Fr>) -> Vec<String> {
         "k={k}, setup and preprocess time: {}ms",
         duration1.as_millis()
     ));
-    println!(
-        "------------?Setup and preprocess: {}ms-----------",
-        duration1.as_millis()
-    );
 
     // 2. generate proof
     let start = Instant::now();
@@ -58,7 +54,7 @@ pub fn test_cq_by_input(table: Vec<Fr>, lookup: Vec<Fr>) -> Vec<String> {
     let proof = prover.prove(&lookup, &q_t_comm_poly_coeffs);
     let duration2 = start.elapsed();
     timings.push(format!("k={k}, prove time: {}ms", duration2.as_millis()));
-    println!("------------prove: {}ms------------", duration2.as_millis());
+    timings.push(format!("Proof size: {} bytes", proof.len()));
 
     let scalar_0 = Fr::from(0_u64);
     let scalar_1 = Fr::from(1_u64);
@@ -346,6 +342,7 @@ impl Cq {
         let proof = Cq::prove(&table, &param, &pp, &lookup, &q_t_comm_poly_coeffs);
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
 
         // 3. Prepare verification data
         let start = std::time::Instant::now();
@@ -410,10 +407,6 @@ mod tests {
         let start = Instant::now();
         let proof = Cq::prove(&table, &param, &pp, &lookup, &q_t_comm_poly_coeffs);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Verify using the original API
         let start = Instant::now();
@@ -471,10 +464,6 @@ mod tests {
         let start = Instant::now();
         let proof = Cq::prove_with_param(&pp, &lookup);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove with param: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Verify using the new API
         let start = Instant::now();

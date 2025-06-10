@@ -9,7 +9,17 @@ use crate::{
     poly::multilinear::MultilinearPolynomialTerms,
     util::{arithmetic::inner_product, transcript::FieldTranscriptRead},
     Error,
+    log_debug, debug_println,
 };
+
+// Initialize logging at module level
+static INIT: std::sync::Once = std::sync::Once::new();
+
+fn ensure_logging_init() {
+    INIT.call_once(|| {
+        crate::logging::init_logging();
+    });
+}
 
 #[derive(Clone, Debug)]
 pub(in crate::backend::lasso) struct Chunk<F> {
@@ -68,14 +78,15 @@ impl<F: PrimeField> Chunk<F> {
         hash: impl Fn(&F, &F, &F) -> F,
         transcript: &mut impl FieldTranscriptRead<F>,
     ) -> Result<(F, F, F, Vec<F>), Error> {
-        println!("DEBUG Chunk::verify_memories: attempting to read 3 field elements + {} e_poly_xs", self.num_memories());
+        ensure_logging_init();
+        log_debug!("Chunk::verify_memories: attempting to read 3 field elements + {} e_poly_xs", self.num_memories());
         let [dim_x, read_ts_poly_x, final_cts_poly_y] =
             transcript.read_field_elements(3)?.try_into().unwrap();
         let e_poly_xs = transcript.read_field_elements(self.num_memories())?;
         
-        println!("DEBUG Verifier read from transcript: [dim_x, read_ts_poly_x, final_cts_poly_y] = [{:?}, {:?}, {:?}]", 
+        log_debug!("Verifier read from transcript: [dim_x, read_ts_poly_x, final_cts_poly_y] = [{:?}, {:?}, {:?}]", 
             dim_x, read_ts_poly_x, final_cts_poly_y);
-        println!("DEBUG Verifier read e_poly_xs (len={}): {:?}", e_poly_xs.len(), e_poly_xs);
+        log_debug!("Verifier read e_poly_xs (len={}): {:?}", e_poly_xs.len(), e_poly_xs);
         
         // Compute id_poly_y using the same method as the prover
         // The identity polynomial at index i should be i
@@ -94,9 +105,9 @@ impl<F: PrimeField> Chunk<F> {
             y_for_id,
         );
         
-        println!("DEBUG Verifier: y = {:?}", y);
-        println!("DEBUG Verifier: id_poly_y = {:?}", id_poly_y);
-        println!("DEBUG Verifier: final_cts_poly_y = {:?}", final_cts_poly_y);
+        log_debug!("Verifier: y = {:?}", y);
+        log_debug!("Verifier: id_poly_y = {:?}", id_poly_y);
+        log_debug!("Verifier: final_cts_poly_y = {:?}", final_cts_poly_y);
         
         self.memory.iter().enumerate().for_each(|(i, memory)| {
             assert_eq!(read_xs[i], hash(&dim_x, &e_poly_xs[i], &read_ts_poly_x));
@@ -113,7 +124,7 @@ impl<F: PrimeField> Chunk<F> {
                 y
             };
             let subtable_poly_y = memory.subtable_poly.evaluate(y_truncated);
-            println!("DEBUG Verifier memory[{}]: subtable_poly_y = {:?}", i, subtable_poly_y);
+            log_debug!("Verifier memory[{}]: subtable_poly_y = {:?}", i, subtable_poly_y);
             
             // Note: We don't check init_ys[i] or final_read_ys[i] here because these polynomials
             // are constructed as init[j] = hash(j, subtable[j], 0) and final_read[j] = hash(j, subtable[j], final_cts[j])
@@ -171,14 +182,15 @@ impl<'a, F: PrimeField> MemoryCheckingVerifier<F> {
     ) -> Result<(), Error> {
         let num_memories: usize = self.chunks.iter().map(|chunk| chunk.num_memories()).sum();
         let memory_bits = self.chunks[0].chunk_bits();
-        println!("DEBUG MemoryCheckingVerifier::verify: num_memories = {}, memory_bits = {}", num_memories, memory_bits);
+        ensure_logging_init();
+        log_debug!("MemoryCheckingVerifier::verify: num_memories = {}, memory_bits = {}", num_memories, memory_bits);
         
         let (read_write_xs, x) = verify_grand_product(
             unified_num_vars,
             iter::repeat(None).take(2 * num_memories),
             transcript,
         )?;
-        println!("DEBUG MemoryCheckingVerifier::verify: after first verify_grand_product, x.len() = {}, read_write_xs.len() = {}", x.len(), read_write_xs.len());
+        log_debug!("MemoryCheckingVerifier::verify: after first verify_grand_product, x.len() = {}, read_write_xs.len() = {}", x.len(), read_write_xs.len());
         let (read_xs, write_xs) = read_write_xs.split_at(num_memories);
 
         let (init_final_read_ys, y) = verify_grand_product(
@@ -186,7 +198,7 @@ impl<'a, F: PrimeField> MemoryCheckingVerifier<F> {
             iter::repeat(None).take(2 * num_memories),
             transcript,
         )?;
-        println!("DEBUG MemoryCheckingVerifier::verify: after second verify_grand_product, y.len() = {}, init_final_read_ys.len() = {}", y.len(), init_final_read_ys.len());
+        log_debug!("MemoryCheckingVerifier::verify: after second verify_grand_product, y.len() = {}, init_final_read_ys.len() = {}", y.len(), init_final_read_ys.len());
         let (init_ys, final_read_ys) = init_final_read_ys.split_at(num_memories);
 
         let hash = |a: &F, v: &F, t: &F| -> F { *a + *v * gamma + *t * gamma.square() - tau };
@@ -196,7 +208,7 @@ impl<'a, F: PrimeField> MemoryCheckingVerifier<F> {
             .iter()
             .map(|chunk| {
                 let num_memories = chunk.num_memories();
-                println!("DEBUG MemoryCheckingVerifier::verify: processing chunk with {} memories, offset = {}", num_memories, offset);
+                log_debug!("MemoryCheckingVerifier::verify: processing chunk with {} memories, offset = {}", num_memories, offset);
                 let result = chunk.verify_memories(
                     &read_xs[offset..offset + num_memories],
                     &write_xs[offset..offset + num_memories],

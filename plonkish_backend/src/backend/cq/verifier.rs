@@ -34,7 +34,6 @@ impl Verifier<'_> {
         m: usize,
         t: usize,
     ) -> bool {
-        println!("Start to verify proof");
         let scalar_0 = Fr::from(0_u64);
         let scalar_1 = Fr::from(1_u64);
         let vp = self.vp;

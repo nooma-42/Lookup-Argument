@@ -254,6 +254,7 @@ impl Baloo {
         let proof = Baloo::prove(&table, &param, &pp, &lookup);
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
 
         // 3. Prepare verification data
         let start = std::time::Instant::now();
@@ -329,10 +330,6 @@ mod tests {
         let start = Instant::now();
         let proof = Baloo::prove(&table, &param, &pp, &lookup);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Prepare verification data
         let start = Instant::now();
@@ -399,10 +396,6 @@ mod tests {
         let start = Instant::now();
         let proof = Baloo::prove_with_param(&pp, &lookup);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove with param: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Prepare verification data and verify
         let start = Instant::now();
