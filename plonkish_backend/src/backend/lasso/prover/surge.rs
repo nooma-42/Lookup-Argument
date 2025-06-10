@@ -1,7 +1,9 @@
-use std::{collections::BTreeSet, iter::repeat, marker::PhantomData};
+use std::{collections::{HashMap, HashSet}, iter::repeat, marker::PhantomData};
 
 use halo2_curves::ff::{Field, PrimeField};
 use itertools::Itertools;
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
@@ -199,8 +201,20 @@ impl<
         let bh_size = 1 << num_vars;
         let eq = MultilinearPolynomial::eq_xy(r);
         // \sum_{k \in \{0, 1\}^{\log m}} (\tilde{eq}(r, k) * g(E_1(k), ..., E_{\alpha}(k)))
+        
+        // 根据 parallel feature 使用不同的迭代器
+        #[cfg(feature = "parallel")]
         let claim = (0..bh_size)
             .into_par_iter()
+            .map(|k| {
+                let operands = e_polys.iter().map(|e_poly| e_poly[k]).collect_vec();
+                eq[k] * table.combine_lookups(&operands)
+            })
+            .sum();
+
+        #[cfg(not(feature = "parallel"))]
+        let claim = (0..bh_size)
+            .into_iter()
             .map(|k| {
                 let operands = e_polys.iter().map(|e_poly| e_poly[k]).collect_vec();
                 eq[k] * table.combine_lookups(&operands)

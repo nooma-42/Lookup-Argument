@@ -13,7 +13,10 @@ use crate::{
 use halo2_curves::ff::PrimeField;
 use num_integer::Integer;
 use rand::RngCore;
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+
 use std::{
     borrow::{Borrow, Cow},
     iter::{self, Sum},
@@ -62,14 +65,30 @@ impl<F: Field> PolyExpr<F> {
         match self {
             PolyExpr::Const(c) => c.clone(),
             PolyExpr::Var(i) => x[*i],
+            
+            // 根据 parallel feature 使用不同的迭代器
+            #[cfg(feature = "parallel")]
             PolyExpr::Sum(v) => v
                 .par_iter()
                 .map(|t| t.evaluate(x))
                 .reduce(|| F::ZERO, |acc, f| acc + f),
+            #[cfg(not(feature = "parallel"))]
+            PolyExpr::Sum(v) => v
+                .iter()
+                .map(|t| t.evaluate(x))
+                .fold(F::ZERO, |acc, f| acc + f),
+                
+            #[cfg(feature = "parallel")]
             PolyExpr::Prod(v) => v
                 .par_iter()
                 .map(|t| t.evaluate(x))
                 .reduce(|| F::ONE, |acc, f| acc * f),
+            #[cfg(not(feature = "parallel"))]
+            PolyExpr::Prod(v) => v
+                .iter()
+                .map(|t| t.evaluate(x))
+                .fold(F::ONE, |acc, f| acc * f),
+                
             PolyExpr::Pow(inner, e) => inner.evaluate(x).pow([*e as u64]),
         }
     }
