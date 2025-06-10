@@ -377,6 +377,7 @@ pub fn test_lasso_by_input(values_to_check: Vec<Fr>) -> Vec<String> {
     
     let prove_duration = start_prove.elapsed();
     timings.push(format!("Prove: {}ms", prove_duration.as_millis()));
+    timings.push(format!("Proof size: {} bytes", proof_bytes.len()));
 
     // Verify phase timing
     let start_verify = Instant::now();

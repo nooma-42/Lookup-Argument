@@ -114,6 +114,7 @@ impl Plookup<Fr, UnivariateKzg<Bn256>> {
         let proof = transcript.into_proof();
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
 
         // 3. Verify
         let start = Instant::now();

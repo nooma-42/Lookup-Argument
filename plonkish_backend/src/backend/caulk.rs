@@ -157,6 +157,7 @@ where
         };
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
 
         // 3. Verify
         let start = std::time::Instant::now();
@@ -199,6 +200,7 @@ where
         };
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
 
         // 3. Verify
         let start = std::time::Instant::now();
