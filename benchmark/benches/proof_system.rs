@@ -1,9 +1,11 @@
 use itertools::Itertools;
-use plonkish_backend::backend::{cq, logupgkr, plookup, lasso};
+use plonkish_backend::backend::{cq, logupgkr, plookup, lasso, caulk};
 use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
 use plonkish_backend::pcs::univariate::UnivariateKzg;
+use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::{
     env::args,
     fmt::Display,
@@ -23,33 +25,75 @@ fn main() {
     let (systems, k_range, n_to_n_ratios, verbose, output_format, debug) = parse_args();
     create_output(&systems);
 
-    // Store all benchmark results for final summary
-    let mut all_results: Vec<BenchmarkResult> = Vec::new();
+    // Generate all benchmark tasks
+    let mut benchmark_tasks = Vec::new();
+    for k in k_range {
+        for system in &systems {
+            for &ratio in &n_to_n_ratios {
+                benchmark_tasks.push((system.clone(), k, ratio));
+            }
+        }
+    }
 
-    // Run benchmarks for each system, k value, and N:n ratio
-    k_range.for_each(|k| {
-        systems.iter().for_each(|system| {
-            n_to_n_ratios.iter().for_each(|&ratio| {
-                if verbose {
-                    println!("→ Running {} benchmark with k = {}, N:n ratio = {}", system.to_string(), k, ratio);
-                }
+    // Print progress information
+    let total_tasks = benchmark_tasks.len();
+    println!("\n🚀 Starting benchmark suite with {} tasks", total_tasks);
+    println!("📊 Systems: {}", systems.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
+    println!("🔧 K values: {:?}", benchmark_tasks.iter().map(|(_, k, _)| *k).collect::<std::collections::HashSet<_>>().into_iter().collect::<Vec<_>>());
+    println!("⚖️  N:n ratios: {:?}", n_to_n_ratios);
+    println!("{}", "=".repeat(60));
 
-                let result = system.bench(k, ratio, verbose, debug);
-                all_results.push(result);
-            });
-        })
+    // Use Arc<Mutex<Vec<BenchmarkResult>>> for thread-safe result collection
+    let all_results = Arc::new(Mutex::new(Vec::new()));
+    let completed_counter = Arc::new(Mutex::new(0));
+
+    // Run benchmarks in parallel using rayon
+    benchmark_tasks.par_iter().enumerate().for_each(|(task_index, (system, k, ratio))| {
+        // Show progress before starting
+        {
+            let mut counter = completed_counter.lock().unwrap();
+            println!("🔄 [{:3}/{:3}] Starting: {} (k={}, ratio={})", 
+                    *counter + 1, total_tasks, system.to_string(), k, ratio);
+        }
+
+        let result = system.bench(*k, *ratio, verbose, debug);
+        
+        // Safely add result to shared collection and update counter
+        {
+            let mut counter = completed_counter.lock().unwrap();
+            all_results.lock().unwrap().push(result);
+            *counter += 1;
+            println!("✅ [{:3}/{:3}] Completed: {} (k={}, ratio={}) - {:.1}% done", 
+                    *counter, total_tasks, system.to_string(), k, ratio, 
+                    (*counter as f64 / total_tasks as f64) * 100.0);
+        }
     });
+
+    // Extract results from Arc<Mutex<>>
+    let final_results = all_results.lock().unwrap().clone();
+
+    // Sort results for consistent display order (by system, then k, then ratio)
+    let mut sorted_results = final_results;
+    sorted_results.sort_by(|a, b| {
+        a.system.to_string()
+            .cmp(&b.system.to_string())
+            .then(a.k_value.cmp(&b.k_value))
+            .then(a.n_to_n_ratio.cmp(&b.n_to_n_ratio))
+    });
+
+    println!("\n🎉 All {} benchmark tasks completed successfully!", sorted_results.len());
+    println!("{}", "=".repeat(60));
 
     // Display results based on selected format
     match output_format {
-        OutputFormat::Table => display_table_results(&all_results),
-        OutputFormat::Compact => display_compact_results(&all_results),
-        OutputFormat::CSV => display_csv_results(&all_results),
-        OutputFormat::JSON => display_json_results(&all_results),
+        OutputFormat::Table => display_table_results(&sorted_results),
+        OutputFormat::Compact => display_compact_results(&sorted_results),
+        OutputFormat::CSV => display_csv_results(&sorted_results),
+        OutputFormat::JSON => display_json_results(&sorted_results),
     }
 
     // Display summary statistics
-    display_summary(&all_results);
+    display_summary(&sorted_results);
 }
 
 // Struct to store benchmark results
@@ -344,9 +388,9 @@ fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Ben
 
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio))
+        with_suppressed_output(|| caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio))
     } else {
-        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio)
+        caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio)
     };
 
     // Write results to file
@@ -783,6 +827,7 @@ impl System {
 
     fn output(&self) -> File {
         OpenOptions::new()
+            .create(true)
             .append(true)
             .open(self.output_path())
             .unwrap()
@@ -821,21 +866,29 @@ fn parse_args() -> (Vec<System>, Range<usize>, Vec<usize>, bool, OutputFormat, b
             |(mut systems, mut k_range, mut n_to_n_ratios, mut verbose, mut output_format, mut debug),
              (key, value)| {
                 match key.as_str() {
-                    "--system" => match value.as_str() {
-                        "all" => systems = System::all(),
-                        "cq" => systems.push(System::CQ),
-                        "CQ" => systems.push(System::CQ),
-                        "Baloo" => systems.push(System::Baloo),
-                        "baloo" => systems.push(System::Baloo),
-                        "logupgkr" => systems.push(System::LogupGKR),
-                        "LogupGKR" => systems.push(System::LogupGKR),
-                        "plookup" => systems.push(System::Plookup),
-                        "Plookup" => systems.push(System::Plookup),
-                        "caulk" => systems.push(System::Caulk),
-                        "Caulk" => systems.push(System::Caulk),
-                        "lasso" => systems.push(System::Lasso),
-                        "Lasso" => systems.push(System::Lasso),
-                        _ => panic!("system should be one of {{all, cq, baloo, logupgkr, plookup, caulk, lasso}}"),
+                    "--system" => {
+                        if value == "all" {
+                            systems = System::all();
+                        } else {
+                            // Support comma-separated systems, e.g., "cq,plookup"
+                            let system_names: Vec<&str> = if value.contains(',') {
+                                value.split(',').map(|s| s.trim()).collect()
+                            } else {
+                                vec![value.as_str()]
+                            };
+                            
+                            for system_name in system_names {
+                                match system_name {
+                                    "cq" | "CQ" => systems.push(System::CQ),
+                                    "baloo" | "Baloo" => systems.push(System::Baloo),
+                                    "logupgkr" | "LogupGKR" => systems.push(System::LogupGKR),
+                                    "plookup" | "Plookup" => systems.push(System::Plookup),
+                                    "caulk" | "Caulk" => systems.push(System::Caulk),
+                                    "lasso" | "Lasso" => systems.push(System::Lasso),
+                                    _ => panic!("system '{}' should be one of {{all, cq, baloo, logupgkr, plookup, caulk, lasso}}", system_name),
+                                }
+                            }
+                        }
                     },
 
                     "--k" => {

@@ -330,10 +330,6 @@ mod tests {
         let start = Instant::now();
         let proof = Baloo::prove(&table, &param, &pp, &lookup);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Prepare verification data
         let start = Instant::now();
@@ -400,10 +396,6 @@ mod tests {
         let start = Instant::now();
         let proof = Baloo::prove_with_param(&pp, &lookup);
         let duration2 = start.elapsed();
-        println!(
-            "\n ------------prove with param: {}ms----------- \n",
-            duration2.as_millis()
-        );
 
         // 3. Prepare verification data and verify
         let start = Instant::now();

@@ -1,9 +1,10 @@
 # Lookup Argument Benchmarks
 
-Benchmark different lookup argument implementations with configurable debug logging.
+Benchmark different lookup argument implementations with configurable debug logging and **parallel execution**.
 
 ## Table of Contents
 - [Benchmarking](#benchmarking)
+- [Parallel Execution](#parallel-execution)
 - [Debug Logging System](#debug-logging-system)
 - [Basic Usage Examples](#basic-usage-examples)
 - [Advanced Usage Examples](#advanced-usage-examples)
@@ -23,6 +24,45 @@ Options:
   --debug, -d          Enable debug mode with detailed output.
   --format, -f <FORMAT> Output format. [possible values: table, compact, csv, json]
 ```
+
+## Parallel Execution
+
+**🚀 NEW: Automatic Parallel Benchmark Execution**
+
+The benchmark system now automatically runs multiple benchmark tasks in parallel using Rust's `rayon` crate, providing significant performance improvements:
+
+### Key Features:
+- **Automatic parallelization**: All benchmark combinations (systems × k-values × ratios) run in parallel
+- **Thread-safe execution**: Safe concurrent access to shared resources and file outputs
+- **Progress tracking**: Real-time progress updates with thread IDs for debugging
+- **Consistent results**: Results are automatically sorted for consistent display order
+- **Load balancing**: Work is automatically distributed across available CPU cores
+
+### Performance Benefits:
+- **Faster execution**: Benchmark suites complete significantly faster than serial execution
+- **CPU utilization**: Better utilization of multi-core systems
+- **Time savings**: Particularly beneficial for comprehensive benchmarks with multiple systems and parameter combinations
+
+### Example Parallel Output:
+```bash
+→ Running 24 benchmark tasks in parallel...
+→ Systems: ["CQ", "Baloo", "LogupGKR", "Plookup", "Caulk", "Lasso"]
+→ K values: [8, 9]
+→ N:n ratios: [2, 4]
+→ [Thread ThreadId(6)] Running CQ benchmark with k = 8, N:n ratio = 2
+→ [Thread ThreadId(5)] Running Plookup benchmark with k = 8, N:n ratio = 2
+→ [Thread ThreadId(9)] Running Baloo benchmark with k = 8, N:n ratio = 2
+...
+✓ [Thread ThreadId(7)] Completed LogupGKR benchmark with k = 8, N:n ratio = 2
+✓ [Thread ThreadId(2)] Completed Lasso benchmark with k = 8, N:n ratio = 2
+→ All 24 benchmark tasks completed!
+```
+
+### Technical Implementation:
+- Uses `rayon::par_iter()` for parallel task execution
+- Thread-safe result collection with `Arc<Mutex<Vec<BenchmarkResult>>>`
+- Maintains file output integrity across concurrent writes
+- Preserves all original functionality while adding parallelization
 
 ## Debug Logging System
 
@@ -195,7 +235,7 @@ cargo bench --bench proof_system -- \
 
 ### Comprehensive Benchmarking
 ```sh
-# Full benchmark test
+# Full benchmark test (runs in parallel automatically)
 cargo bench --bench proof_system -- \
     --system logupgkr,plookup,lasso \
     --k 8..15 \
@@ -203,7 +243,7 @@ cargo bench --bench proof_system -- \
     --format table \
     --verbose
 
-# Specific system deep analysis
+# Specific system deep analysis (parallel execution)
 cargo bench --bench proof_system -- \
     --system lasso \
     --k 10..14 \
@@ -212,20 +252,51 @@ cargo bench --bench proof_system -- \
     --debug
 ```
 
+### Parallel Performance Examples
+```sh
+# Small parallel test (6 tasks: 6 systems × 1 k-value × 1 ratio)
+cargo bench --bench proof_system -- \
+    --system all \
+    --k 8 \
+    --ratio 2 \
+    --verbose
+
+# Medium parallel test (24 tasks: 6 systems × 2 k-values × 2 ratios)
+cargo bench --bench proof_system -- \
+    --system all \
+    --k 8..10 \
+    --ratio 2,4 \
+    --verbose
+
+# Large parallel test (120 tasks: 5 systems × 4 k-values × 6 ratios)
+cargo bench --bench proof_system -- \
+    --system cq,baloo,logupgkr,plookup,lasso \
+    --k 8..12 \
+    --ratio 1,2,4,8,16,32 \
+    --format compact
+```
+
 ## New Features
 
-### 1. **Debug Logging System**
+### 1. **Parallel Benchmark Execution** 🆕
+- **Automatic parallelization**: All benchmark tasks run concurrently using `rayon`
+- **Significant speedup**: Better utilization of multi-core systems
+- **Thread-safe operation**: Safe concurrent file writing and result collection
+- **Real-time progress**: Thread-level progress tracking with IDs
+- **Consistent output**: Results automatically sorted for predictable display order
+
+### 2. **Debug Logging System**
 - **Three log levels**: Silent, Info (default), Debug
 - **Environment variable control**: `LOOKUP_LOG_LEVEL=debug/info/silent`
 - **Performance optimized**: Debug formatting skipped when disabled
 - **Thread-safe**: Global configuration with safe concurrent access
 
-### 2. **Multiple N:n Ratio Testing**
+### 3. **Multiple N:n Ratio Testing**
 - **Before**: Only single N:n ratio testing
 - **Now**: Support comma-separated multiple ratios like `--ratio 2,4,8`
 - **Purpose**: Comprehensive analysis of how different table-to-lookup size ratios affect performance across systems
 
-### 3. **Proof Size Measurement**
+### 4. **Proof Size Measurement**
 - **New Field**: `proof_size` (in bytes)
 - **Display Format**: 
   - Less than 1KB: "XXXnB" 
@@ -233,7 +304,7 @@ cargo bench --bench proof_system -- \
   - No data available: "N/A"
 - **Purpose**: Compare proof size efficiency across different proving systems
 
-### 4. **Enhanced Output Formats**
+### 5. **Enhanced Output Formats**
 - **Table Format**: Added "Proof Size" column
 - **Compact Format**: Includes proof size information
 - **Compatibility**: All existing formats (CSV, JSON) support the new field
