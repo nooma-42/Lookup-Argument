@@ -50,3 +50,6 @@ required-features = ["benchmark"]
 name = "pcs"
 harness = false
 required-features = ["benchmark"]
+
+[[example]]
+name = "logging_demo"

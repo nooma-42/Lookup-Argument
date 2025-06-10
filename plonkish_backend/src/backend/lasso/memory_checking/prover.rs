@@ -7,7 +7,17 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use crate::{
     backend::lasso::prover::Chunk, pcs::Evaluation, piop::gkr::prove_grand_product,
     poly::multilinear::MultilinearPolynomial, util::{transcript::FieldTranscriptWrite, arithmetic::inner_product}, Error,
+    log_debug, debug_println,
 };
+
+// Initialize logging at module level
+static INIT: std::sync::Once = std::sync::Once::new();
+
+fn ensure_logging_init() {
+    INIT.call_once(|| {
+        crate::logging::init_logging();
+    });
+}
 
 use super::MemoryGKR;
 
@@ -65,21 +75,22 @@ impl<'a, F: PrimeField> MemoryCheckingProver<'a, F> {
                             
                             // Add debug output for the first few entries when it's a problematic case
                             if i < 5 && chunk.chunk_bits() >= 4 {
-                                println!("DEBUG Prover memory index {}: id_value = {:?}, subtable_poly = {:?}, final_cts_poly = {:?}", 
+                                ensure_logging_init();
+                                log_debug!("Prover memory index {}: id_value = {:?}, subtable_poly = {:?}, final_cts_poly = {:?}", 
                                     i, id_value, subtable_poly[i], final_cts_poly[i]);
-                                println!("DEBUG Prover memory index {}: init = {:?}", i, init[i]);
-                                println!("DEBUG Prover memory index {}: final_read = {:?}", i, final_read[i]);
+                                log_debug!("Prover memory index {}: init = {:?}", i, init[i]);
+                                log_debug!("Prover memory index {}: final_read = {:?}", i, final_read[i]);
                                 
                                 // Debug the hash computation
                                 let manual_hash = id_value + subtable_poly[i] * gamma + F::ZERO * gamma.square() - tau;
-                                println!("DEBUG Prover memory index {}: manual_hash for init = {:?}", i, manual_hash);
+                                log_debug!("Prover memory index {}: manual_hash for init = {:?}", i, manual_hash);
                                 
                                 // Verify that id_value matches subtable_poly[i] for the identity function
                                 if id_value != subtable_poly[i] {
-                                    println!("DEBUG Prover memory index {}: MISMATCH! id_value = {:?}, subtable_poly = {:?}", 
+                                    log_debug!("Prover memory index {}: MISMATCH! id_value = {:?}, subtable_poly = {:?}", 
                                         i, id_value, subtable_poly[i]);
                                 } else {
-                                    println!("DEBUG Prover memory index {}: MATCH! id_value = subtable_poly = {:?}", i, id_value);
+                                    log_debug!("Prover memory index {}: MATCH! id_value = subtable_poly = {:?}", i, id_value);
                                 }
                             }
                         });
@@ -94,11 +105,12 @@ impl<'a, F: PrimeField> MemoryCheckingProver<'a, F> {
                         // Debug: Create the multilinear polynomial and check its evaluation at a test point
                         let init_poly = MultilinearPolynomial::new(init.clone());
                         if chunk.chunk_bits() >= 4 {
-                            println!("DEBUG Prover: init vector length = {}, memory_size = {}, unified_memory_size = {}", 
+                            ensure_logging_init();
+                            log_debug!("Prover: init vector length = {}, memory_size = {}, unified_memory_size = {}", 
                                 init.len(), memory_size, unified_memory_size);
-                            println!("DEBUG Prover: init polynomial has {} variables, {} evaluations", 
+                            log_debug!("Prover: init polynomial has {} variables, {} evaluations", 
                                 init_poly.num_vars(), init_poly.evals().len());
-                            println!("DEBUG Prover: first 5 init values: {:?}", 
+                            log_debug!("Prover: first 5 init values: {:?}", 
                                 &init_poly.evals()[..5.min(init_poly.evals().len())]);
                         }
                         
@@ -194,32 +206,33 @@ impl<'a, F: PrimeField> MemoryCheckingProver<'a, F> {
         lookup_opening_evals: &mut Vec<Evaluation<F>>,
         transcript: &mut impl FieldTranscriptWrite<F>,
     ) -> Result<(), Error> {
-        println!("DEBUG MemoryCheckingProver::prove: num_memories = {}", self.memories.len());
+        ensure_logging_init();
+        log_debug!("MemoryCheckingProver::prove: num_memories = {}", self.memories.len());
         
         let (_, x) = prove_grand_product(
             iter::repeat(None).take(self.memories.len() * 2),
             chain!(self.reads(), self.writes()),
             transcript,
         )?;
-        println!("DEBUG MemoryCheckingProver::prove: after first grand_product, x.len() = {}", x.len());
+        log_debug!("MemoryCheckingProver::prove: after first grand_product, x.len() = {}", x.len());
 
         let (_, y) = prove_grand_product(
             iter::repeat(None).take(self.memories.len() * 2),
             chain!(self.inits(), self.final_reads()),
             transcript,
         )?;
-        println!("DEBUG MemoryCheckingProver::prove: after second grand_product, y.len() = {}", y.len());
+        log_debug!("MemoryCheckingProver::prove: after second grand_product, y.len() = {}", y.len());
         
         // Debug: Check what the init polynomial evaluates to at the challenge point y
         if self.memories.len() > 0 {
             let init_poly = &self.memories[0].init;
-            println!("DEBUG Prover: init_poly.num_vars() = {}", init_poly.num_vars());
+            log_debug!("Prover: init_poly.num_vars() = {}", init_poly.num_vars());
             if y.len() >= init_poly.num_vars() {
                 let y_truncated = &y[..init_poly.num_vars()];
                 let init_at_y = init_poly.evaluate(y_truncated);
-                println!("DEBUG Prover: init_poly.evaluate(y[..{}]) = {:?}", init_poly.num_vars(), init_at_y);
+                log_debug!("Prover: init_poly.evaluate(y[..{}]) = {:?}", init_poly.num_vars(), init_at_y);
             } else {
-                println!("DEBUG Prover: y.len() = {} < init_poly.num_vars() = {}", y.len(), init_poly.num_vars());
+                log_debug!("Prover: y.len() = {} < init_poly.num_vars() = {}", y.len(), init_poly.num_vars());
             }
         }
 
@@ -236,10 +249,10 @@ impl<'a, F: PrimeField> MemoryCheckingProver<'a, F> {
                 let chunk_poly_evals = chunk.chunk_poly_evals(&x, &y);
                 let e_poly_xs = chunk.e_poly_evals(&x);
                 
-                println!("DEBUG Prover chunk_poly_evals: {:?}", chunk_poly_evals);
-                println!("DEBUG Prover writing to transcript: final_cts_poly.evaluate(y) = {:?}", chunk_poly_evals[2]);
-                println!("DEBUG Prover writing chunk_poly_evals (len={}): {:?}", chunk_poly_evals.len(), chunk_poly_evals);
-                println!("DEBUG Prover writing e_poly_xs (len={}): {:?}", e_poly_xs.len(), e_poly_xs);
+                log_debug!("Prover chunk_poly_evals: {:?}", chunk_poly_evals);
+                log_debug!("Prover writing to transcript: final_cts_poly.evaluate(y) = {:?}", chunk_poly_evals[2]);
+                log_debug!("Prover writing chunk_poly_evals (len={}): {:?}", chunk_poly_evals.len(), chunk_poly_evals);
+                log_debug!("Prover writing e_poly_xs (len={}): {:?}", e_poly_xs.len(), e_poly_xs);
                 
                 transcript.write_field_elements(&chunk_poly_evals).unwrap();
                 transcript.write_field_elements(&e_poly_xs).unwrap();

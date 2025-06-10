@@ -7,8 +7,14 @@ pub mod pcs;
 pub mod piop;
 pub mod poly;
 pub mod util;
+pub mod logging;
 
 pub use halo2_curves;
+
+pub use util::{
+    expression::{CommonPolynomial, Expression, Query, Rotation},
+    Deserialize, DeserializeOwned, Serialize,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
