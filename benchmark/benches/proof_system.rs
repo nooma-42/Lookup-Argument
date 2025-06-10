@@ -335,21 +335,18 @@ fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> B
 }
 
 fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // Note: Caulk's test_caulk_by_k currently uses a fixed N:n ratio of 2 internally.
-    // Warn if the requested ratio is different.
-    if n_to_n_ratio != 2 && (verbose || debug) {
-            println!("WARN: Caulk benchmark currently uses a fixed N:n ratio of 2, ignoring provided ratio {}", n_to_n_ratio);
-    }
-
     if verbose || debug {
-        println!("Running Caulk benchmark with k={}", k);
+        println!("Running Caulk benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+        let table_size = 1 << k;
+        let lookup_size = table_size / n_to_n_ratio;
+        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
     }
 
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k))
+        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio))
     } else {
-        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k(k)
+        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio)
     };
 
     // Write results to file

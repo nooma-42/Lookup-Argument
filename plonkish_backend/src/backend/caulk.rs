@@ -127,16 +127,22 @@ where
 
     // Run the full Caulk protocol with table and lookup generated based on k
     pub fn test_caulk_by_k(k: usize) -> Vec<String> {
+        Self::test_caulk_by_k_and_ratio(k, 2)
+    }
+
+    // Run the full Caulk protocol with table and lookup generated based on k and N:n ratio
+    pub fn test_caulk_by_k_and_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
         use halo2_curves::bn256::{Bn256, Fr};
 
         let mut timings: Vec<String> = vec![];
         let start_total = std::time::Instant::now();
 
+        // Calculate table and lookup sizes based on k and ratio
+        let table_size = 2_usize.pow(k as u32);
+        let lookup_size = table_size / n_to_n_ratio;
+
         // Use cq's generator for consistency in benchmarks
-        let (c, values) = crate::backend::cq::generate_table_and_lookup(
-            2_usize.pow(k as u32),
-            2_usize.pow((k - 1) as u32), // N:n ratio = 2
-        );
+        let (c, values) = crate::backend::cq::generate_table_and_lookup(table_size, lookup_size);
         let N = c.len();
         let m = values.len();
 
@@ -217,16 +223,22 @@ where
 
     /// Test optimized Caulk with precomputed G2 openings
     pub fn test_caulk_optimized_by_k(k: usize) -> Vec<String> {
+        Self::test_caulk_optimized_by_k_and_ratio(k, 2)
+    }
+
+    /// Test optimized Caulk with precomputed G2 openings and configurable N:n ratio
+    pub fn test_caulk_optimized_by_k_and_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
         use halo2_curves::bn256::{Bn256, Fr};
 
         let mut timings: Vec<String> = vec![];
         let start_total = std::time::Instant::now();
 
+        // Calculate table and lookup sizes based on k and ratio
+        let table_size = 2_usize.pow(k as u32);
+        let lookup_size = table_size / n_to_n_ratio;
+
         // Use cq's generator for consistency in benchmarks
-        let (c, values) = crate::backend::cq::generate_table_and_lookup(
-            2_usize.pow(k as u32),
-            2_usize.pow((k - 1) as u32), // N:n ratio = 2
-        );
+        let (c, values) = crate::backend::cq::generate_table_and_lookup(table_size, lookup_size);
         let N = c.len();
         let m = values.len();
 
@@ -498,5 +510,32 @@ mod tests {
         }
         
         println!("✅ Caulk performance comparison test completed!");
+    }
+
+    #[test]
+    fn test_caulk_with_different_ratios() {
+        // Test that the new ratio-aware function works with different N:n ratios
+        let k = 4; // Small table size for quick testing
+
+        // Test with ratio 2 (original behavior)
+        let timings_ratio_2 = TestCaulk::test_caulk_by_k_and_ratio(k, 2);
+        assert!(!timings_ratio_2.is_empty());
+        println!("Ratio 2 timings: {:?}", timings_ratio_2);
+
+        // Test with ratio 4
+        let timings_ratio_4 = TestCaulk::test_caulk_by_k_and_ratio(k, 4);
+        assert!(!timings_ratio_4.is_empty());
+        println!("Ratio 4 timings: {:?}", timings_ratio_4);
+
+        // Test with ratio 8
+        let timings_ratio_8 = TestCaulk::test_caulk_by_k_and_ratio(k, 8);
+        assert!(!timings_ratio_8.is_empty());
+        println!("Ratio 8 timings: {:?}", timings_ratio_8);
+
+        // Verify that the backward compatibility function still works
+        let timings_legacy = TestCaulk::test_caulk_by_k(k);
+        assert!(!timings_legacy.is_empty());
+        
+        println!("✅ Caulk with different N:n ratios test passed!");
     }
 } 
