@@ -1,121 +1,125 @@
-use crate::{
-    poly::multilinear::MultilinearPolynomial,
-    util::{
-        arithmetic::PrimeField,
-        transcript::{InMemoryTranscript, Keccak256Transcript, FieldTranscriptWrite, FieldTranscriptRead},
-        Deserialize, DeserializeOwned, Serialize,
-    },
-    Error,
-};
-use halo2_curves::ff::WithSmallOrderMulGroup;
-use std::{fmt::Debug, hash::Hash, marker::PhantomData, time::Instant, collections::HashMap};
+// src/logupgkr.rs
 
-pub mod preprocessor;
 pub mod prover;
 pub mod verifier;
 pub mod util;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LogupGkrProverParam<F>
-where
-    F: PrimeField,
-{
-    m_poly: MultilinearPolynomial<F>,
-    t_poly: MultilinearPolynomial<F>,
-    w_polys: Vec<MultilinearPolynomial<F>>,
-    a: F,
-    ps: MultilinearPolynomial<F>,
-    qs: MultilinearPolynomial<F>,
-    p_0s: Vec<Option<F>>,
-    q_0s: Vec<Option<F>>,
-}
+use crate::{
+    pcs::{multilinear::MultilinearKzg, PolynomialCommitmentScheme, Evaluation},
+    poly::multilinear::MultilinearPolynomial,
+    util::{
+        arithmetic::PrimeField,
+        transcript::{FiatShamirTranscript, InMemoryTranscript, TranscriptRead, TranscriptWrite, Keccak256Transcript},
+    },
+    Error,
+};
+use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine}; // 直接導入具體類型
+use std::{marker::PhantomData, time::Instant, collections::HashMap, io::Cursor};
+use rand::rngs::OsRng;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LogupGkrVerifierParam<F>
-where
-    F: PrimeField,
-{
-    num_vars: usize,
-    p_0s: Vec<Option<F>>,
-    q_0s: Vec<Option<F>>,
-}
+// 類型別名現在是具體的，不再有泛型
+type Pcs = MultilinearKzg<Bn256>;
+type OwnedTranscript = Keccak256Transcript<Cursor<Vec<u8>>>;
+
+// --- 公共結構體定義 (無泛型) ---
 
 #[derive(Clone, Debug)]
-pub struct LogupGkrInfo<F> {
-    m_values: HashMap<Vec<bool>, F>,
-    t_values: HashMap<Vec<bool>, F>,
-    w_values: Vec<HashMap<Vec<bool>, F>>,
-    a: F,
+pub struct VerifierParam {
+    pub pcs_vp: <Pcs as PolynomialCommitmentScheme<Fr>>::VerifierParam,
+    pub num_vars: usize,
+    pub num_vars_row: usize,
+    pub m_comm: <Pcs as PolynomialCommitmentScheme<Fr>>::Commitment,
+    pub t_comm: <Pcs as PolynomialCommitmentScheme<Fr>>::Commitment,
+    pub w_comms: Vec<<Pcs as PolynomialCommitmentScheme<Fr>>::Commitment>,
 }
 
-#[derive(Clone, Debug)]
-pub struct LogupGkr<F>(PhantomData<F>);
-
-impl<F> LogupGkr<F>
-where
-    F: PrimeField + WithSmallOrderMulGroup<3> + Hash + Serialize + DeserializeOwned,
-{
-    pub fn preprocess(
-        info: &LogupGkrInfo<F>,
-    ) -> Result<(LogupGkrProverParam<F>, LogupGkrVerifierParam<F>), Error> {
-        preprocessor::preprocess(info)
-    }
-
-    pub fn prove(
-        pp: LogupGkrProverParam<F>,
-        transcript: &mut impl FieldTranscriptWrite<F>,
-    ) -> Result<(), Error> {
-        prover::prove(pp, transcript)
-    }
-
-    pub fn verify(
-        vp: LogupGkrVerifierParam<F>,
-        transcript: &mut impl FieldTranscriptRead<F>,
-    ) -> Result<(), Error> {
-        verifier::verify(vp, transcript)
-    }
+#[derive(Clone)]
+pub struct ProverParam {
+    pub pcs_pp: <Pcs as PolynomialCommitmentScheme<Fr>>::ProverParam,
+    pub m_poly: MultilinearPolynomial<Fr>,
+    pub t_poly: MultilinearPolynomial<Fr>,
+    pub w_polys: Vec<MultilinearPolynomial<Fr>>,
 }
 
-// Concrete implementation for BN256/Fr
-use halo2_curves::bn256::{Bn256, Fr};
+// --- 主結構體和核心 API (無泛型) ---
+pub struct LogupGkr {
+    _marker: PhantomData<()>,
+}
 
-impl LogupGkr<Fr> {
-    // Run the full LogupGkr protocol with given parameters
+impl LogupGkr {
+    pub fn setup(
+        m_poly: &MultilinearPolynomial<Fr>,
+        t_poly: &MultilinearPolynomial<Fr>,
+        w_polys: &[MultilinearPolynomial<Fr>],
+    ) -> Result<(ProverParam, VerifierParam), Error> {
+        let num_vars_row = t_poly.num_vars();
+        let num_vars_col = if w_polys.is_empty() { 0 } else { 
+            let total_cols = w_polys.len() + 1; // +1 for the t column
+            // We need ceil(log2(total_cols)) bits to index all columns
+            // For powers of 2, this is exactly log2, but for non-powers we need to round up
+            if total_cols.is_power_of_two() {
+                total_cols.ilog2() as usize
+            } else {
+                (total_cols.ilog2() + 1) as usize
+            }
+        };
+        let num_vars = num_vars_row + num_vars_col;
+        assert_eq!(m_poly.num_vars(), num_vars_row, "Mismatch in m_poly num_vars");
+        for w_poly in w_polys {
+            assert_eq!(w_poly.num_vars(), num_vars_row, "Mismatch in w_poly num_vars");
+        }
+        let num_polys_to_commit = 2 + w_polys.len();
+        let max_poly_size = 1 << num_vars_row;
+        let pcs_param = Pcs::setup(max_poly_size, num_polys_to_commit, OsRng)?;
+        let (pcs_pp, pcs_vp) = Pcs::trim(&pcs_param, max_poly_size, num_polys_to_commit)?;
+        let m_comm = Pcs::commit(&pcs_pp, m_poly)?;
+        let t_comm = Pcs::commit(&pcs_pp, t_poly)?;
+        let w_comms = Pcs::batch_commit(&pcs_pp, w_polys.iter())?;
+        let pp = ProverParam { pcs_pp, m_poly: m_poly.clone(), t_poly: t_poly.clone(), w_polys: w_polys.to_vec() };
+        let vp = VerifierParam { pcs_vp, num_vars, num_vars_row, m_comm, t_comm, w_comms };
+        Ok((pp, vp))
+    }
+
+    pub fn prove(pp: &ProverParam) -> Result<Vec<u8>, Error> {
+        let mut transcript = OwnedTranscript::default();
+        prover::prove(pp, &mut transcript)?;
+        Ok(transcript.into_proof())
+    }
+    
+    pub fn verify(vp: &VerifierParam, proof: &[u8]) -> Result<(), Error> {
+        let mut transcript = OwnedTranscript::from_proof((), proof);
+        verifier::verify(vp, &mut transcript)
+    }
+
+    /// 一個端到端的測試函數
     pub fn test_logupgkr(
         m_values: HashMap<Vec<bool>, Fr>,
         t_values: HashMap<Vec<bool>, Fr>,
         w_values: Vec<HashMap<Vec<bool>, Fr>>,
-        a: Fr,
     ) -> Vec<String> {
         let mut timings: Vec<String> = vec![];
         let start_total = Instant::now();
 
-        // 1. Setup
-        let info = LogupGkrInfo {
-            m_values,
-            t_values,
-            w_values,
-            a,
-        };
-
+        let m_poly = util::create_multilinear_poly(m_values);
+        let t_poly = util::create_multilinear_poly(t_values);
+        let w_polys: Vec<_> = w_values.into_iter().map(util::create_multilinear_poly).collect();
+        
+        println!("Running setup...");
         let start = Instant::now();
-        let (pp, vp) = Self::preprocess(&info).unwrap();
+        let (pp, vp) = Self::setup(&m_poly, &t_poly, &w_polys).unwrap();
         let duration1 = start.elapsed();
-        timings.push(format!("Preprocess: {}ms", duration1.as_millis()));
+        timings.push(format!("Setup: {}ms", duration1.as_millis()));
 
-        // 2. Prove
+        println!("Generating proof...");
         let start = Instant::now();
-        let mut transcript = Keccak256Transcript::new(());
-        Self::prove(pp, &mut transcript).unwrap();
-        let proof = transcript.into_proof();
+        let proof = Self::prove(&pp).unwrap();
         let duration2 = start.elapsed();
         timings.push(format!("Prove: {}ms", duration2.as_millis()));
         timings.push(format!("Proof size: {} bytes", proof.len()));
 
-        // 3. Verify
+        println!("Verifying proof...");
         let start = Instant::now();
-        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
-        Self::verify(vp, &mut transcript).unwrap();
+        Self::verify(&vp, &proof).unwrap();
         let duration3 = start.elapsed();
         timings.push(format!("Verify: {}ms", duration3.as_millis()));
 
@@ -126,35 +130,17 @@ impl LogupGkr<Fr> {
     }
 }
 
+
+
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::backend::logupgkr::util::{generate_binary_combinations, create_multilinear_poly};
     use std::collections::HashMap;
     use halo2_curves::bn256::Fr;
 
     #[test]
-    fn logupgkr_e2e_test1() {
-        /* 
-        witness (w_values): (w1, w2) 2 cols
-        1, 2
-        2, 1
-        3, 4
-        1, 2
-
-        multiplicity (m_values): 
-        3, # 3 1s in witness
-        3, # 3 2s in witness
-        1, # 1 3s in witness 
-        1, # 1 4s in witness
-
-        table (t_values):
-        1, # 1 is first element in table being looked up
-        2, # 2 is second element in table being looked up
-        3, # 3 is third element in table being looked up
-        4, # 4 is fourth element in table being looked up
-         */
-        // Create example parameter values
+    fn logupgkr_e2e_test_kzg() {
         let m_values = HashMap::from([
             (vec![false, false], Fr::from(3u64)),
             (vec![false, true], Fr::from(3u64)),
@@ -184,65 +170,11 @@ mod test {
             ]),
         ];
 
-        let a = Fr::from(5u64);
+        let timings = LogupGkr::test_logupgkr(m_values, t_values, w_values);
 
-        let timings = LogupGkr::test_logupgkr(m_values, t_values, w_values, a);
-
-        // Print all timing information
+        println!("\n--- LogupGkr with KZG E2E Test ---");
         for timing in &timings {
             println!("{}", timing);
         }
-    }
-
-    #[test]
-    fn logupgkr_e2e_test2() {
-        /* 
-        witness (w_values): (w1) 1 cols
-        1
-        2
-        3
-        1
-
-        multiplicity (m_values): 
-        2, # 2 1s in witness
-        1, # 1 2s in witness
-        1, # 1 3s in witness 
-        1, # 1 4s in witness
-
-        table (t_values):
-        1, # 1 is first element in table being looked up
-        2, # 2 is second element in table being looked up
-        3, # 3 is third element in table being looked up
-        4, # 4 is fourth element in table being looked up
-        */
-
-        let m_values = HashMap::from([
-            (vec![false, false], Fr::from(2u64)),
-            (vec![false, true], Fr::from(1u64)),
-            (vec![true, false], Fr::from(1u64)),
-            (vec![true, true], Fr::from(1u64)),
-        ]);
-
-        let t_values = HashMap::from([
-            (vec![false, false], Fr::from(1u64)),
-            (vec![false, true], Fr::from(2u64)),
-            (vec![true, false], Fr::from(3u64)),
-            (vec![true, true], Fr::from(4u64)),
-        ]);
-        
-        let w_values = vec![
-            HashMap::from([ 
-                (vec![false, false], Fr::from(1u64)),
-                (vec![false, true], Fr::from(2u64)),
-                (vec![true, false], Fr::from(3u64)),
-                (vec![true, true], Fr::from(1u64)),
-            ]),
-        ];
-
-        let a = Fr::from(5u64);
-
-        let timings = LogupGkr::test_logupgkr(m_values, t_values, w_values, a);
-        
-        
     }
 }

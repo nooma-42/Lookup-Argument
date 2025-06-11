@@ -234,11 +234,10 @@ fn bench_logup_gkr(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) ->
             // Calculate 'a' parameter (can be any value for testing)
             let a = Fr::from(table_size as u64 + 1);
             
-            logupgkr::LogupGkr::<Fr>::test_logupgkr(
+            logupgkr::LogupGkr::test_logupgkr(
                 m_values,
                 t_values,
                 w_values,
-                a,
             )
         })
     } else {
@@ -252,11 +251,10 @@ fn bench_logup_gkr(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) ->
         let a = Fr::from(table_size as u64 + 1);
         
         println!("Running LogupGKR test with converted data...");
-        let result = logupgkr::LogupGkr::<Fr>::test_logupgkr(
+        let result = logupgkr::LogupGkr::test_logupgkr(
             m_values,
             t_values,
             w_values,
-            a,
         );
         
         if verbose {
