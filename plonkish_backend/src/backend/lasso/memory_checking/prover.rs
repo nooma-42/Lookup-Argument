@@ -2,6 +2,8 @@ use std::iter;
 
 use halo2_curves::ff::PrimeField;
 use itertools::{chain, Itertools};
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
@@ -41,10 +43,92 @@ impl<'a, F: PrimeField> MemoryCheckingProver<'a, F> {
 
         let hash = |a: &F, v: &F, t: &F| -> F { *a + *v * gamma + *t * gamma.square() - tau };
 
-
-
+        #[cfg(feature = "parallel")]
         let memories_gkr: Vec<MemoryGKR<F>> = (0..chunks.len())
             .into_par_iter()
+            .flat_map(|i| {
+                let chunk = &chunks[i];
+                let chunk_polys = chunk.chunk_polys().collect_vec();
+                let (dim, read_ts_poly, final_cts_poly) =
+                    (chunk_polys[0], chunk_polys[1], chunk_polys[2]);
+                chunk
+                    .memories()
+                    .map(|memory| {
+                        let memory_polys = memory.polys().collect_vec();
+                        let (subtable_poly, e_poly) = (memory_polys[0], memory_polys[1]);
+                        // Use unified_memory_size for all polynomials to ensure consistent variable count
+                        let mut init = vec![F::ZERO; unified_memory_size];
+                        let mut read = vec![F::ZERO; unified_memory_size];
+                        let mut write = vec![F::ZERO; unified_memory_size];
+                        let mut final_read = vec![F::ZERO; unified_memory_size];
+                        
+                        // Fill the memory values - ensure we don't exceed bounds
+                        let safe_memory_size = memory_size.min(subtable_poly.evals().len()).min(final_cts_poly.evals().len());
+                        (0..safe_memory_size).for_each(|i| {
+                            // The identity polynomial value at index i should be i
+                            let id_value = F::from(i as u64);
+                            init[i] = hash(&id_value, &subtable_poly[i], &F::ZERO);
+                            final_read[i] = hash(
+                                &id_value,
+                                &subtable_poly[i],
+                                &final_cts_poly[i],
+                            );
+                            
+                            // Add debug output for the first few entries when it's a problematic case
+                            if i < 5 && chunk.chunk_bits() >= 4 {
+                                ensure_logging_init();
+                                log_debug!("Prover memory index {}: id_value = {:?}, subtable_poly = {:?}, final_cts_poly = {:?}", 
+                                    i, id_value, subtable_poly[i], final_cts_poly[i]);
+                                log_debug!("Prover memory index {}: init = {:?}", i, init[i]);
+                                log_debug!("Prover memory index {}: final_read = {:?}", i, final_read[i]);
+                                
+                                // Debug the hash computation
+                                let manual_hash = id_value + subtable_poly[i] * gamma + F::ZERO * gamma.square() - tau;
+                                log_debug!("Prover memory index {}: manual_hash for init = {:?}", i, manual_hash);
+                                
+                                // Verify that id_value matches subtable_poly[i] for the identity function
+                                if id_value != subtable_poly[i] {
+                                    log_debug!("Prover memory index {}: MISMATCH! id_value = {:?}, subtable_poly = {:?}", 
+                                        i, id_value, subtable_poly[i]);
+                                } else {
+                                    log_debug!("Prover memory index {}: MATCH! id_value = subtable_poly = {:?}", i, id_value);
+                                }
+                            }
+                        });
+                        
+                        // Fill the read/write values - ensure we don't exceed bounds
+                        let safe_num_reads = num_reads.min(dim.evals().len()).min(e_poly.evals().len()).min(read_ts_poly.evals().len());
+                        (0..safe_num_reads).for_each(|i| {
+                            read[i] = hash(&dim[i], &e_poly[i], &read_ts_poly[i]);
+                            write[i] = hash(&dim[i], &e_poly[i], &(read_ts_poly[i] + F::ONE));
+                        });
+                        
+                        // Debug: Create the multilinear polynomial and check its evaluation at a test point
+                        let init_poly = MultilinearPolynomial::new(init.clone());
+                        if chunk.chunk_bits() >= 4 {
+                            ensure_logging_init();
+                            log_debug!("Prover: init vector length = {}, memory_size = {}, unified_memory_size = {}", 
+                                init.len(), memory_size, unified_memory_size);
+                            log_debug!("Prover: init polynomial has {} variables, {} evaluations", 
+                                init_poly.num_vars(), init_poly.evals().len());
+                            log_debug!("Prover: first 5 init values: {:?}", 
+                                &init_poly.evals()[..5.min(init_poly.evals().len())]);
+                        }
+                        
+                        MemoryGKR::new(
+                            init_poly,
+                            MultilinearPolynomial::new(read),
+                            MultilinearPolynomial::new(write),
+                            MultilinearPolynomial::new(final_read),
+                        )
+                    })
+                    .collect_vec()
+            })
+            .collect();
+
+        #[cfg(not(feature = "parallel"))]
+        let memories_gkr: Vec<MemoryGKR<F>> = (0..chunks.len())
+            .into_iter()
             .flat_map(|i| {
                 let chunk = &chunks[i];
                 let chunk_polys = chunk.chunk_polys().collect_vec();

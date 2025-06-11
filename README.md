@@ -27,21 +27,47 @@ Options:
 
 ## Parallel Execution
 
-**🚀 NEW: Automatic Parallel Benchmark Execution**
+**🚀 NEW: Automatic Parallel Benchmark Execution + Individual Algorithm Parallelization**
 
-The benchmark system now automatically runs multiple benchmark tasks in parallel using Rust's `rayon` crate, providing significant performance improvements:
+The benchmark system now supports two levels of parallelization:
 
-### Key Features:
+### 1. Benchmark-Level Parallelization
+Multiple benchmark tasks run in parallel using Rust's `rayon` crate, providing significant performance improvements:
+
+#### Key Features:
 - **Automatic parallelization**: All benchmark combinations (systems × k-values × ratios) run in parallel
 - **Thread-safe execution**: Safe concurrent access to shared resources and file outputs
 - **Progress tracking**: Real-time progress updates with thread IDs for debugging
 - **Consistent results**: Results are automatically sorted for consistent display order
 - **Load balancing**: Work is automatically distributed across available CPU cores
 
-### Performance Benefits:
+#### Performance Benefits:
 - **Faster execution**: Benchmark suites complete significantly faster than serial execution
 - **CPU utilization**: Better utilization of multi-core systems
 - **Time savings**: Particularly beneficial for comprehensive benchmarks with multiple systems and parameter combinations
+
+### 2. Algorithm-Level Parallelization
+Individual proof systems can now run in parallel or non-parallel mode based on the `parallel` feature flag:
+
+#### Supported Systems:
+- **LogupGKR**: ✅ Full parallel/non-parallel support
+- **Lasso**: ✅ Full parallel/non-parallel support (NEW!)
+- **HyperPlonk**: ✅ Always parallel (uses `util::parallel` module)
+- **Plookup**: ❌ Always serial
+- **CQ**: ❌ Always serial  
+- **Baloo**: ❌ Always serial
+- **Caulk**: ❌ Always serial
+
+#### Performance Comparison:
+You can now compare the performance difference between parallel and non-parallel implementations:
+
+```bash
+# Run with parallel algorithms enabled (default)
+cargo bench --bench proof_system -- --system lasso --k 8..12 --format table
+
+# Run with parallel algorithms disabled
+cargo bench --bench proof_system --no-default-features --features timer -- --system lasso --k 8..12 --format table
+```
 
 ### Example Parallel Output:
 ```bash

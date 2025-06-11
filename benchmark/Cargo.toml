@@ -9,8 +9,8 @@ itertools = "0.10.5"
 gnuplot = "0.0.37"
 rayon = "1.8.0"
 
-# plonkish_backend
-plonkish_backend = { path = "../plonkish_backend", features = ["benchmark"] }
+# plonkish_backend - 默认包含 benchmark 和 parallel features
+plonkish_backend = { path = "../plonkish_backend", default-features = false, features = ["benchmark", "frontend-halo2"] }
 
 # halo2
 halo2_proofs = { git = "https://github.com/han0110/halo2.git", branch = "feature/for-benchmark" }
@@ -26,8 +26,11 @@ espresso_hyperplonk = { git = "https://github.com/EspressoSystems/hyperplonk", r
 regex = "1.11.1"
 
 [features]
-default = []
+default = ["parallel"]
+parallel = ["plonkish_backend/parallel"]
 timer = ["plonkish_backend/timer", "halo2_proofs/print-trace", "espresso_subroutines/print-trace", "espresso_hyperplonk/print-trace"]
+benchmark = ["plonkish_backend/benchmark"]
+frontend-halo2 = ["plonkish_backend/frontend-halo2"]
 
 [[bench]]
 name = "proof_system"

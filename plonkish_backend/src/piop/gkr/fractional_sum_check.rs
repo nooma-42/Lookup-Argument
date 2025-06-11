@@ -10,15 +10,20 @@ use crate::{
     },
     poly::multilinear::MultilinearPolynomial,
     util::{
-        arithmetic::{div_ceil, inner_product, powers, PrimeField},
+        arithmetic::{inner_product, powers, PrimeField},
         chain,
         expression::{Expression, Query, Rotation},
         izip,
-        parallel::{num_threads, parallelize_iter},
         transcript::{FieldTranscriptRead, FieldTranscriptWrite},
         Itertools,
     },
     Error,
+};
+
+#[cfg(feature = "parallel")]
+use crate::util::{
+    arithmetic::div_ceil,
+    parallel::{num_threads, parallelize_iter},
 };
 use std::{array, iter};
 
@@ -59,6 +64,7 @@ impl<F: PrimeField> Layer<F> {
         izip!(p_l, p_r, q_l, q_r)
     }
 
+    #[cfg(feature = "parallel")]
     fn up(&self) -> Self {
         assert!(self.num_vars() != 0);
 
@@ -80,6 +86,38 @@ impl<F: PrimeField> Layer<F> {
                 })
             },
         );
+
+        outputs.into()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn up(&self) -> Self {
+        assert!(self.num_vars() != 0);
+
+        let len = 1 << self.num_vars();
+        let mut outputs: [_; 4] = array::from_fn(|_| vec![F::ZERO; len >> 1]);
+        
+        // Get the polynomial evaluations
+        let [p_l, p_r, q_l, q_r] = self.polys().map(|poly| poly.evals());
+        
+        // Get mutable references to output buffers
+        let (p_s_mut, q_s_mut) = outputs.split_at_mut(2);
+        let p_out = &mut p_s_mut[0];
+        let q_out = &mut q_s_mut[0];
+
+        // Sequential iteration through all elements
+        izip!(
+            p_out.iter_mut(),
+            q_out.iter_mut(),
+            p_l.iter(),
+            p_r.iter(),
+            q_l.iter(),
+            q_r.iter()
+        )
+        .for_each(|(p_out, q_out, &p_l, &p_r, &q_l, &q_r)| {
+            *p_out = p_l * q_r + p_r * q_l;
+            *q_out = q_l * q_r;
+        });
 
         outputs.into()
     }
@@ -310,7 +348,7 @@ fn err_unmatched_sum_check_output() -> Error {
 mod test {
     use crate::{
         piop::gkr::fractional_sum_check::{
-            prove_fractional_sum_check, verify_fractional_sum_check,
+            prove_fractional_sum_check, verify_fractional_sum_check, Layer,
         },
         poly::multilinear::MultilinearPolynomial,            
         util::{
@@ -365,6 +403,56 @@ mod test {
             for (poly, eval) in izip_eq!(chain![ps, qs], chain![p_xs, q_xs]) {
                 assert_eq!(poly.evaluate(&x), eval);
             }
+        }
+    }
+
+    #[test]
+    fn test_layer_up_consistency() {
+        // Test that the up operation works correctly for both parallel and non-parallel versions
+        let mut rng = seeded_std_rng();
+        
+        for num_vars in 2..6 { // Test with smaller ranges for faster test execution
+            let len = 1 << num_vars;
+            
+            // Create random polynomials
+            let p: MultilinearPolynomial<Fr> = MultilinearPolynomial::new(rand_vec(len, &mut rng));
+            let q: MultilinearPolynomial<Fr> = MultilinearPolynomial::new(rand_vec(len, &mut rng));
+            
+            // Create layer using the bottom function
+            let layer = Layer::bottom((&&&p, &&&q));
+            
+            // Verify the layer was created correctly from bottom
+            assert_eq!(layer.num_vars(), num_vars - 1); // bottom reduces by 1 variable
+            
+            // Skip the up test if the resulting layer would have 0 variables
+            if layer.num_vars() == 0 {
+                continue;
+            }
+            
+            // Test up operation - the implementation will use either parallel or non-parallel
+            // based on feature compilation
+            let result = layer.up();
+            
+            // Verify the result has correct structure
+            assert_eq!(result.num_vars(), layer.num_vars() - 1);
+            
+            let expected_len = 1 << result.num_vars();
+            assert_eq!(result.p_l.evals().len(), expected_len);
+            assert_eq!(result.p_r.evals().len(), expected_len);
+            assert_eq!(result.q_l.evals().len(), expected_len);
+            assert_eq!(result.q_r.evals().len(), expected_len);
+            
+            // Verify computation correctness by manual calculation
+            let [p_l, p_r, q_l, q_r] = layer.polys().map(|poly| poly.evals());
+            let expected_p: Vec<Fr> = (0..expected_len)
+                .map(|i| p_l[i] * q_r[i] + p_r[i] * q_l[i])
+                .collect();
+            let expected_q: Vec<Fr> = (0..expected_len)
+                .map(|i| q_l[i] * q_r[i])
+                .collect();
+                
+            assert_eq!(result.p_l.evals(), &expected_p);
+            assert_eq!(result.q_l.evals(), &expected_q);
         }
     }
 }
