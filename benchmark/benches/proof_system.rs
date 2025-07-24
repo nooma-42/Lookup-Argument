@@ -10,7 +10,7 @@ use std::{
     env::args,
     fmt::Display,
     fs::{create_dir, File, OpenOptions},
-    io::Write,
+    io::{Write, BufWriter},
     ops::Range,
     path::Path,
 };
@@ -19,6 +19,122 @@ use std::{
 type PlookupBn256 = plookup::Plookup<Fr, UnivariateKzg<Bn256>>;
 
 const OUTPUT_DIR: &str = "../target/bench";
+
+// Struct to track benchmark execution results (success or failure)
+#[derive(Debug, Clone)]
+enum BenchmarkOutcome {
+    Success(BenchmarkResult),
+    Failure(BenchmarkFailure),
+}
+
+// Struct to store failed benchmark information
+#[derive(Debug, Clone)]
+struct BenchmarkFailure {
+    system: System,
+    k_value: usize,
+    n_to_n_ratio: usize,
+    error_message: String,
+    timestamp: std::time::SystemTime,
+}
+
+// Thread-safe CSV writer for incremental results
+struct CsvWriter {
+    file: Arc<Mutex<BufWriter<File>>>,
+    header_written: Arc<Mutex<bool>>,
+}
+
+impl CsvWriter {
+    fn new(filename: &str) -> Result<Self, std::io::Error> {
+        let file = File::create(filename)?;
+        let buffered_writer = BufWriter::new(file);
+        
+        Ok(CsvWriter {
+            file: Arc::new(Mutex::new(buffered_writer)),
+            header_written: Arc::new(Mutex::new(false)),
+        })
+    }
+    
+    fn write_result(&self, result: &BenchmarkResult) -> Result<(), std::io::Error> {
+        let mut file = self.file.lock().unwrap();
+        let mut header_written = self.header_written.lock().unwrap();
+        
+        // Write header if not written yet
+        if !*header_written {
+            writeln!(file, "System,K,N_to_n_Ratio,SetupTime_ms,ProveTime_ms,VerifyTime_ms,TotalTime_ms,ProofSize_bytes,Timestamp")?;
+            *header_written = true;
+        }
+        
+        let total = result.setup_time + result.prove_time + result.verify_time;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+            
+        writeln!(
+            file,
+            "{},{},{},{},{},{},{},{},{}",
+            result.system,
+            result.k_value,
+            result.n_to_n_ratio,
+            result.setup_time,
+            result.prove_time,
+            result.verify_time,
+            total,
+            result.proof_size,
+            timestamp
+        )?;
+        
+        file.flush()?;
+        Ok(())
+    }
+}
+
+// Thread-safe failure tracker for incremental failure logging
+struct FailureTracker {
+    file: Arc<Mutex<BufWriter<File>>>,
+    header_written: Arc<Mutex<bool>>,
+}
+
+impl FailureTracker {
+    fn new(filename: &str) -> Result<Self, std::io::Error> {
+        let file = File::create(filename)?;
+        let buffered_writer = BufWriter::new(file);
+        
+        Ok(FailureTracker {
+            file: Arc::new(Mutex::new(buffered_writer)),
+            header_written: Arc::new(Mutex::new(false)),
+        })
+    }
+    
+    fn write_failure(&self, failure: &BenchmarkFailure) -> Result<(), std::io::Error> {
+        let mut file = self.file.lock().unwrap();
+        let mut header_written = self.header_written.lock().unwrap();
+        
+        // Write header if not written yet
+        if !*header_written {
+            writeln!(file, "System,K,N_to_n_Ratio,ErrorMessage,Timestamp")?;
+            *header_written = true;
+        }
+        
+        let timestamp = failure.timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+            
+        writeln!(
+            file,
+            "{},{},{},\"{}\",{}",
+            failure.system,
+            failure.k_value,
+            failure.n_to_n_ratio,
+            failure.error_message.replace("\"", "\"\""), // Escape quotes in CSV
+            timestamp
+        )?;
+        
+        file.flush()?;
+        Ok(())
+    }
+}
 
 fn main() {
     // Parse arguments
@@ -43,9 +159,37 @@ fn main() {
     println!("⚖️  N:n ratios: {:?}", n_to_n_ratios);
     println!("{}", "=".repeat(60));
 
-    // Use Arc<Mutex<Vec<BenchmarkResult>>> for thread-safe result collection
-    let all_results = Arc::new(Mutex::new(Vec::new()));
+    // Create CSV writer and failure tracker for incremental writing
+    let csv_writer = match CsvWriter::new("benchmark_results.csv") {
+        Ok(writer) => Some(Arc::new(writer)),
+        Err(e) => {
+            eprintln!("⚠️  Warning: Could not create CSV file: {}. Results will only be displayed.", e);
+            None
+        }
+    };
+    
+    let failure_tracker = match FailureTracker::new("benchmark_failures.csv") {
+        Ok(tracker) => Some(Arc::new(tracker)),
+        Err(e) => {
+            eprintln!("⚠️  Warning: Could not create failure tracking file: {}. Failures will only be displayed.", e);
+            None
+        }
+    };
+
+    // Use Arc<Mutex<Vec<BenchmarkOutcome>>> for thread-safe result collection
+    let all_outcomes = Arc::new(Mutex::new(Vec::new()));
     let completed_counter = Arc::new(Mutex::new(0));
+    let success_counter = Arc::new(Mutex::new(0));
+    let failure_counter = Arc::new(Mutex::new(0));
+
+    println!("💾 Incremental CSV writing enabled:");
+    if csv_writer.is_some() {
+        println!("   📊 Results: benchmark_results.csv");
+    }
+    if failure_tracker.is_some() {
+        println!("   ❌ Failures: benchmark_failures.csv");
+    }
+    println!();
 
     // Run benchmarks in parallel using rayon
     benchmark_tasks.par_iter().enumerate().for_each(|(task_index, (system, k, ratio))| {
@@ -56,44 +200,131 @@ fn main() {
                     *counter + 1, total_tasks, system.to_string(), k, ratio);
         }
 
-        let result = system.bench(*k, *ratio, verbose, debug);
+        // Execute benchmark with error handling
+        let outcome = match std::panic::catch_unwind(|| {
+            system.bench(*k, *ratio, verbose, debug)
+        }) {
+            Ok(result) => {
+                // Write successful result to CSV immediately
+                if let Some(ref csv_writer) = csv_writer {
+                    if let Err(e) = csv_writer.write_result(&result) {
+                        eprintln!("⚠️  Warning: Failed to write result to CSV: {}", e);
+                    }
+                }
+                BenchmarkOutcome::Success(result)
+            },
+            Err(panic_info) => {
+                let error_msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "Unknown panic occurred".to_string()
+                };
+                
+                let failure = BenchmarkFailure {
+                    system: *system,
+                    k_value: *k,
+                    n_to_n_ratio: *ratio,
+                    error_message: error_msg,
+                    timestamp: std::time::SystemTime::now(),
+                };
+                
+                // Write failure to failure tracking file immediately
+                if let Some(ref failure_tracker) = failure_tracker {
+                    if let Err(e) = failure_tracker.write_failure(&failure) {
+                        eprintln!("⚠️  Warning: Failed to write failure to CSV: {}", e);
+                    }
+                }
+                
+                BenchmarkOutcome::Failure(failure)
+            }
+        };
         
-        // Safely add result to shared collection and update counter
+        // Safely add outcome to shared collection and update counters
         {
-            let mut counter = completed_counter.lock().unwrap();
-            all_results.lock().unwrap().push(result);
-            *counter += 1;
-            println!("✅ [{:3}/{:3}] Completed: {} (k={}, ratio={}) - {:.1}% done", 
-                    *counter, total_tasks, system.to_string(), k, ratio, 
-                    (*counter as f64 / total_tasks as f64) * 100.0);
+            let mut completed = completed_counter.lock().unwrap();
+            all_outcomes.lock().unwrap().push(outcome.clone());
+            *completed += 1;
+            
+            match outcome {
+                BenchmarkOutcome::Success(_) => {
+                    let mut success = success_counter.lock().unwrap();
+                    *success += 1;
+                    println!("✅ [{:3}/{:3}] Completed: {} (k={}, ratio={}) - {:.1}% done", 
+                            *completed, total_tasks, system.to_string(), k, ratio, 
+                            (*completed as f64 / total_tasks as f64) * 100.0);
+                },
+                BenchmarkOutcome::Failure(ref failure) => {
+                    let mut failures = failure_counter.lock().unwrap();
+                    *failures += 1;
+                    println!("❌ [{:3}/{:3}] Failed: {} (k={}, ratio={}) - {:.1}% done - Error: {}", 
+                            *completed, total_tasks, system.to_string(), k, ratio, 
+                            (*completed as f64 / total_tasks as f64) * 100.0,
+                            failure.error_message);
+                }
+            }
         }
     });
 
     // Extract results from Arc<Mutex<>>
-    let final_results = all_results.lock().unwrap().clone();
+    let final_outcomes = all_outcomes.lock().unwrap().clone();
+    let total_success = *success_counter.lock().unwrap();
+    let total_failures = *failure_counter.lock().unwrap();
+
+    // Separate successful results and failures
+    let mut successful_results = Vec::new();
+    let mut failures = Vec::new();
+    
+    for outcome in final_outcomes {
+        match outcome {
+            BenchmarkOutcome::Success(result) => successful_results.push(result),
+            BenchmarkOutcome::Failure(failure) => failures.push(failure),
+        }
+    }
 
     // Sort results for consistent display order (by system, then k, then ratio)
-    let mut sorted_results = final_results;
-    sorted_results.sort_by(|a, b| {
+    successful_results.sort_by(|a, b| {
         a.system.to_string()
             .cmp(&b.system.to_string())
             .then(a.k_value.cmp(&b.k_value))
             .then(a.n_to_n_ratio.cmp(&b.n_to_n_ratio))
     });
 
-    println!("\n🎉 All {} benchmark tasks completed successfully!", sorted_results.len());
+    println!("\n🎉 Benchmark suite completed!");
+    println!("📊 Summary: {} successful, {} failed, {} total", total_success, total_failures, total_tasks);
     println!("{}", "=".repeat(60));
 
-    // Display results based on selected format
-    match output_format {
-        OutputFormat::Table => display_table_results(&sorted_results),
-        OutputFormat::Compact => display_compact_results(&sorted_results),
-        OutputFormat::CSV => display_csv_results(&sorted_results),
-        OutputFormat::JSON => display_json_results(&sorted_results),
+    // Display successful results based on selected format (if any exist)
+    if !successful_results.is_empty() {
+        match output_format {
+            OutputFormat::Table => display_table_results(&successful_results),
+            OutputFormat::Compact => display_compact_results(&successful_results),
+            OutputFormat::CSV => display_csv_results(&successful_results),
+            OutputFormat::JSON => display_json_results(&successful_results),
+        }
+
+        // Display summary statistics for successful results
+        display_summary(&successful_results);
+    } else {
+        println!("❌ No successful benchmark results to display.");
     }
 
-    // Display summary statistics
-    display_summary(&sorted_results);
+    // Display failure summary if there were any failures
+    if !failures.is_empty() {
+        display_failure_summary(&failures);
+    }
+
+    // Final file location summary
+    if csv_writer.is_some() || failure_tracker.is_some() {
+        println!("\n📁 Files created:");
+        if csv_writer.is_some() {
+            println!("   📊 benchmark_results.csv - {} successful results", total_success);
+        }
+        if failure_tracker.is_some() {
+            println!("   ❌ benchmark_failures.csv - {} failures", total_failures);
+        }
+    }
 }
 
 // Struct to store benchmark results
@@ -802,6 +1033,50 @@ fn display_summary(results: &[BenchmarkResult]) {
     }
 
     println!("└──────────┴─────────────┴─────────┴─────────────┴────────────┴─────────────┘");
+}
+
+// Function to display failure summary
+fn display_failure_summary(failures: &[BenchmarkFailure]) {
+    println!("\n❌ Failure Summary:");
+    println!("┌────────────┬─────┬─────────┬──────────────────────────────────────────────────┐");
+    println!("│ System     │ K   │ N:n     │ Error Message                                    │");
+    println!("├────────────┼─────┼─────────┼──────────────────────────────────────────────────┤");
+
+    for failure in failures {
+        let truncated_error = if failure.error_message.len() > 48 {
+            format!("{}...", &failure.error_message[..45])
+        } else {
+            failure.error_message.clone()
+        };
+        
+        println!("│ {:<10} │ {:<3} │ {:<7} │ {:<48} │",
+            failure.system.to_string(),
+            failure.k_value,
+            failure.n_to_n_ratio,
+            truncated_error
+        );
+    }
+    
+    println!("└────────────┴─────┴─────────┴──────────────────────────────────────────────────┘");
+    
+    // Group failures by system to show patterns
+    let mut system_failures: HashMap<System, usize> = HashMap::new();
+    for failure in failures {
+        *system_failures.entry(failure.system).or_insert(0) += 1;
+    }
+    
+    if system_failures.len() > 1 {
+        println!("\n📈 Failure Distribution:");
+        for (system, count) in system_failures {
+            println!("   {} {}: {} failures", 
+                match count {
+                    1 => "•",
+                    2..=5 => "▪",
+                    _ => "▮",
+                },
+                system, count);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
