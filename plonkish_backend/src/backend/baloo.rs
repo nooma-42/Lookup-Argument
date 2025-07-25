@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
-use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine};
+use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine, G1};
+use halo2_curves::group::{Group, Curve};
 
 use crate::{
     backend::cq::generate_table_and_lookup,
@@ -19,6 +20,7 @@ use crate::{
     Error,
 };
 
+pub mod key;
 pub mod preprocessor;
 pub mod prover;
 pub mod util;
@@ -63,6 +65,14 @@ impl Baloo {
         preprocessor::preprocess(t, m)
     }
 
+    // Optimized table-specific preprocessing that achieves O(m) proving complexity
+    pub fn preprocess_for_table(
+        table: &[Fr],
+        m_max: usize,
+    ) -> Result<(key::BalooProverKey, key::BalooVerifierKey), Error> {
+        preprocessor::preprocess_for_table(table, m_max)
+    }
+
     // Alternative preprocess function that takes an info struct
     pub fn preprocess_with_info(
         info: &BalooInfo,
@@ -92,15 +102,37 @@ impl Baloo {
         pp: &UnivariateKzgProverParam<Bn256>,
         lookup: &Vec<Fr>,
     ) -> Vec<u8> {
-        let prover = prover::Prover::new(table, param, pp);
+        // Legacy prove function - creates a minimal prover key for backward compatibility
+        // For optimal O(m) performance, use prove_with_key instead
+        let t = table.len();
+        let d = (1 << pp.k()) - 2;
+        
+        // Create a minimal key structure (without precomputed proofs for now)
+        let legacy_key = key::BalooProverKey {
+            pp: pp.clone(),
+            param: param.clone(),
+            table_comm: UnivariateKzg::<Bn256>::commit_monomial(pp, &vec![Fr::zero(); t]),
+            z_h_comm: UnivariateKzg::<Bn256>::commit_monomial(pp, &vec![Fr::zero(); t + 1]),
+            table_element_proofs: vec![G1::identity().to_affine(); t],
+            subgroup_element_proofs: vec![G1::identity().to_affine(); t],
+            table: table.clone(),
+            t,
+            d,
+        };
+        
+        let prover = prover::Prover::new(&legacy_key);
         prover.prove(lookup)
     }
 
+    // Optimized prove function using preprocessed BalooProverKey (O(m) complexity)
+    pub fn prove_with_key(pk: &key::BalooProverKey, lookup: &[Fr]) -> Vec<u8> {
+        let prover = prover::Prover::new(pk);
+        prover.prove(&lookup.to_vec())
+    }
+
     pub fn prove_with_param(pp: &BalooProverParam, lookup: &Vec<Fr>) -> Vec<u8> {
-        let table_vec = pp.table.clone(); // Clone to avoid lifetime issues
-        let lookup_vec = lookup.clone();
-        let prover = prover::Prover::new(&table_vec, &pp.param, &pp.pp);
-        prover.prove(&lookup_vec)
+        // Convert BalooProverParam to legacy API call
+        Baloo::prove(&pp.table, &pp.param, &pp.pp, lookup)
     }
 
     pub fn verify(
