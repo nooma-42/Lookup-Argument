@@ -149,6 +149,12 @@ pub fn test_cq_by_k(k: usize) -> Vec<String> {
     timings
 }
 
+/// Test CQ with k parameter and N:n ratio using unified range check data
+pub fn test_cq_by_k_with_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+    let (table, lookup) = crate::util::benchmark::generate_range_check_data(k, n_to_n_ratio);
+    test_cq_by_input(table, lookup)
+}
+
 // Specific implementation for Bn256 curves
 #[derive(Clone, Debug)]
 pub struct CqProverParam {

@@ -128,6 +128,18 @@ impl LogupGkr {
 
         timings
     }
+
+    /// Test LogupGKR with k parameter and N:n ratio using unified range check data
+    pub fn test_logupgkr_by_k_with_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+        // Generate unified range check data
+        let (table, lookup) = crate::util::benchmark::generate_range_check_data(k, n_to_n_ratio);
+        
+        // Convert to logupgkr format using the utility function
+        let (m_values, t_values, w_values) = util::convert_to_logupgkr_format(lookup, table);
+        
+        // Run the test with converted data
+        Self::test_logupgkr(m_values, t_values, w_values)
+    }
 }
 
 

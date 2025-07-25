@@ -206,15 +206,8 @@ use std::time::Instant;
 
 /// Generate values for range check based on k parameter
 pub fn generate_range_check_values(k: usize, n_to_n_ratio: usize) -> Vec<Fr> {
-    // For range check, we limit the range to avoid extremely large tables
-    let range_bits = k.min(8); // Maximum 8-bit range (0-255)
-    let range_size = 1 << range_bits;
-    let lookup_size = range_size / n_to_n_ratio;
-    
-    // Generate values to check (within the range)
-    (0..lookup_size)
-        .map(|i| Fr::from((i % range_size) as u64))
-        .collect()
+    // Use the unified range check utility from util::benchmark
+    crate::util::benchmark::generate_range_check_values(k, n_to_n_ratio)
 }
 
 /// Run Lasso range check with given values and return timing information

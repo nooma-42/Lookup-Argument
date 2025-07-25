@@ -351,9 +351,15 @@ enum OutputFormat {
 fn bench_baloo(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| plonkish_backend::backend::baloo::Baloo::test_baloo_by_k(k))
+        with_suppressed_output(|| plonkish_backend::backend::baloo::Baloo::test_baloo_by_k_with_ratio(k, n_to_n_ratio))
     } else {
-        plonkish_backend::backend::baloo::Baloo::test_baloo_by_k(k)
+        if verbose || debug {
+            println!("Running Baloo benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+            let range_size = 1 << k;
+            let lookup_size = range_size / n_to_n_ratio;
+            println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
+        }
+        plonkish_backend::backend::baloo::Baloo::test_baloo_by_k_with_ratio(k, n_to_n_ratio)
     };
 
     // Write results to file
@@ -396,9 +402,15 @@ fn bench_baloo(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Ben
 fn bench_CQ(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| plonkish_backend::backend::cq::test_cq_by_k(k))
+        with_suppressed_output(|| plonkish_backend::backend::cq::test_cq_by_k_with_ratio(k, n_to_n_ratio))
     } else {
-        plonkish_backend::backend::cq::test_cq_by_k(k)
+        if verbose || debug {
+            println!("Running CQ benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+            let range_size = 1 << k;
+            let lookup_size = range_size / n_to_n_ratio;
+            println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
+        }
+        plonkish_backend::backend::cq::test_cq_by_k_with_ratio(k, n_to_n_ratio)
     };
 
     // Write results to file
@@ -439,54 +451,18 @@ fn bench_CQ(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Benchm
 }
 
 fn bench_logup_gkr(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // Create test data based on k
-    let table_size = 1 << k.min(10); // 2^k, 最大限制为 2^10 以防止过大
-    
-    // Calculate lookup size based on the ratio N:n
-    let lookup_size = table_size / n_to_n_ratio;
-    
-    // Create lookup and table vectors
-    let table: Vec<Fr> = (1..=table_size).map(|i| Fr::from(i as u64)).collect();
-    
-    // Create lookup with some repeated values for testing multiplicities
-    let mut lookup = Vec::with_capacity(lookup_size);
-    for i in 0..lookup_size {
-        // Add some repetition pattern - use modulo to create repeating values
-        let value = i % (table_size / 4).max(1) + 1;
-        lookup.push(Fr::from(value as u64));
-    }
-    
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| {
-            // Convert to logupgkr format using the utility function
-            let (m_values, t_values, w_values) = logupgkr::util::convert_to_logupgkr_format(lookup, table);
-            
-            // Calculate 'a' parameter (can be any value for testing)
-            let a = Fr::from(table_size as u64 + 1);
-            
-            logupgkr::LogupGkr::test_logupgkr(
-                m_values,
-                t_values,
-                w_values,
-            )
-        })
+        with_suppressed_output(|| logupgkr::LogupGkr::test_logupgkr_by_k_with_ratio(k, n_to_n_ratio))
     } else {
-        println!("Running LogupGKR benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
-        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
+        if verbose || debug {
+            println!("Running LogupGKR benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+            let range_size = 1 << k;
+            let lookup_size = range_size / n_to_n_ratio;
+            println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
+        }
         
-        // Convert to logupgkr format using the utility function
-        let (m_values, t_values, w_values) = logupgkr::util::convert_to_logupgkr_format(lookup, table);
-        
-        // Calculate 'a' parameter (can be any value for testing)
-        let a = Fr::from(table_size as u64 + 1);
-        
-        println!("Running LogupGKR test with converted data...");
-        let result = logupgkr::LogupGkr::test_logupgkr(
-            m_values,
-            t_values,
-            w_values,
-        );
+        let result = logupgkr::LogupGkr::test_logupgkr_by_k_with_ratio(k, n_to_n_ratio);
         
         if verbose {
             println!("LogupGKR test completed. Results:");
@@ -536,29 +512,18 @@ fn bench_logup_gkr(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) ->
 }
 
 fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // Calculate table and lookup sizes based on k and ratio
-    let table_size = 1 << k;
-    let lookup_size = table_size / n_to_n_ratio;
-    
-    // Generate table and lookup values using the utility function from CQ
-    let (table, lookup) = cq::generate_table_and_lookup(table_size, lookup_size);
-    
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| {
-            PlookupBn256::test_plookup_by_input(
-                table.clone(),
-                lookup.clone(),
-            )
-        })
+        with_suppressed_output(|| PlookupBn256::test_plookup_by_k_with_ratio(k, n_to_n_ratio))
     } else {
-        println!("Running Plookup benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
-        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
+        if verbose || debug {
+            println!("Running Plookup benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+            let range_size = 1 << k;
+            let lookup_size = range_size / n_to_n_ratio;
+            println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
+        }
         
-        let result = PlookupBn256::test_plookup_by_input(
-            table.clone(),
-            lookup.clone(),
-        );
+        let result = PlookupBn256::test_plookup_by_k_with_ratio(k, n_to_n_ratio);
         
         if verbose {
             println!("Plookup test completed. Results:");
@@ -610,16 +575,16 @@ fn bench_plookup(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> B
 fn bench_caulk(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
     if verbose || debug {
         println!("Running Caulk benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
-        let table_size = 1 << k;
-        let lookup_size = table_size / n_to_n_ratio;
-        println!("Table size: {}, Lookup size: {}", table_size, lookup_size);
+        let range_size = 1 << k;
+        let lookup_size = range_size / n_to_n_ratio;
+        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
     }
 
     // Capture and redirect detailed output if not verbose
     let timings = if !verbose && !debug {
-        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio))
+        with_suppressed_output(|| plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_with_ratio_unified(k, n_to_n_ratio))
     } else {
-        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_and_ratio(k, n_to_n_ratio)
+        plonkish_backend::backend::caulk::Caulk::<Bn256>::test_caulk_by_k_with_ratio_unified(k, n_to_n_ratio)
     };
 
     // Write results to file
@@ -1236,11 +1201,10 @@ fn bench_lasso(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> Ben
         println!("Running Lasso benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
         
         // Calculate range and lookup sizes for display
-        let range_bits = k.min(8);
-        let range_size = 1 << range_bits;
+        let range_size = 1 << k;
         let lookup_size = range_size / n_to_n_ratio;
         
-        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, range_bits, lookup_size);
+        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
         
         let result = lasso::test_lasso_by_k_with_ratio(k, n_to_n_ratio);
         

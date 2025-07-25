@@ -1,4 +1,6 @@
 pub mod arithmetic;
+#[cfg(any(test, feature = "benchmark"))]
+pub mod benchmark;
 pub mod code;
 pub mod expression;
 pub mod hash;
