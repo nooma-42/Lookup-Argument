@@ -45,12 +45,13 @@ struct CsvWriter {
 
 impl CsvWriter {
     fn new(filename: &str) -> Result<Self, std::io::Error> {
-        let file = File::create(filename)?;
+        let file_exists = Path::new(filename).exists();
+        let file = OpenOptions::new().create(true).append(true).open(filename)?;
         let buffered_writer = BufWriter::new(file);
         
         Ok(CsvWriter {
             file: Arc::new(Mutex::new(buffered_writer)),
-            header_written: Arc::new(Mutex::new(false)),
+            header_written: Arc::new(Mutex::new(file_exists)),
         })
     }
     

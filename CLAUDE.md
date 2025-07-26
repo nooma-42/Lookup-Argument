@@ -144,3 +144,30 @@ Use `log_info!()` and `log_debug!()` macros in code for structured logging.
 
 ### Testing Parallel vs Non-Parallel
 Use `test_parallel_comparison.sh` to compare performance between parallel and non-parallel implementations for supported systems.
+
+## Known Issues
+
+### Lasso Parallel Execution Race Conditions
+**Issue**: Lasso benchmarks fail with `InvalidSumcheck` errors when run in parallel with other Lasso instances.
+
+**Symptoms**: 
+- Individual Lasso tests work perfectly
+- Multiple concurrent Lasso benchmarks cause sumcheck validation failures
+- Error occurs at `lasso.rs:459:7` in verifier with message "Unmatched between Lasso sum_check output and query evaluation"
+
+**Root Cause**: Race conditions in Lasso's internal state when multiple instances run concurrently. This affects:
+- Memory checking prover/verifier state
+- Transcript generation and challenge derivation
+- Polynomial commitment operations
+- Shared static state in range table creation
+
+**Workaround**: Run Lasso benchmarks with sequential execution:
+```bash
+# For individual testing (clean output without verbose timing logs)
+cargo bench --bench proof_system --no-default-features -- --system lasso --k 8..10
+
+# For comprehensive benchmarking
+./run_benchmark_with_csv.sh  # Now automatically handles this
+```
+
+**Status**: This is a known limitation. Lasso works correctly but cannot run multiple instances in parallel safely. The benchmark script has been updated to handle this automatically.

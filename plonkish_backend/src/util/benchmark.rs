@@ -1,4 +1,5 @@
 use halo2_curves::bn256::Fr;
+use halo2_curves::ff::PrimeField;
 
 /// Generate values for range check benchmarking
 /// 
@@ -63,7 +64,7 @@ mod tests {
         
         // All values should be in range [0, 15]
         for value in values {
-            let val_u64: u64 = value.into();
+            let val_u64 = u64::from(value.to_repr().as_ref()[0]);
             assert!(val_u64 < 16);
         }
     }
@@ -79,7 +80,7 @@ mod tests {
         
         // Should contain values 0 through 7
         for (i, value) in table.iter().enumerate() {
-            let val_u64: u64 = (*value).into();
+            let val_u64 = u64::from(value.to_repr().as_ref()[0]);
             assert_eq!(val_u64, i as u64);
         }
     }
