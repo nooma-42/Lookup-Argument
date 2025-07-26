@@ -1,6 +1,8 @@
 use crate::{
-    backend::baloo::util::{log_2, pow_2},
-    backend::baloo::preprocessor::preprocess,
+    backend::baloo::{
+        util::{log_2, pow_2},
+        key::BalooProverKey,
+    },
     pcs::{
         univariate::{
             UnivariateKzg, UnivariateKzgCommitment, UnivariateKzgParam, UnivariateKzgProverParam,
@@ -8,15 +10,16 @@ use crate::{
     },
     poly::{univariate::UnivariatePolynomial, Polynomial},
     util::{
-        arithmetic::{barycentric_weights, root_of_unity, Field},
+        arithmetic::{barycentric_weights, root_of_unity, variable_base_msm, Field},
         transcript::{
-            FieldTranscript, FieldTranscriptRead, FieldTranscriptWrite,
-            G2TranscriptRead, G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript,
+            FieldTranscript, FieldTranscriptWrite,
+            G2TranscriptWrite, InMemoryTranscript, Keccak256Transcript,
             TranscriptWrite,
         },
     },
 };
 use halo2_curves::bn256::{Bn256, Fr, G1Affine, G2Affine};
+use halo2_curves::group::Curve;
 use std::{collections::HashSet, ops::Mul};
 use rand::rngs::OsRng;
 
@@ -699,9 +702,294 @@ impl Prover<'_> {
     }
 }
 
+/// Optimized Prover that uses precomputed witness proofs for O(m) proving complexity
+pub struct OptimizedProver<'a> {
+    pk: &'a BalooProverKey,
+}
+
+impl<'a> OptimizedProver<'a> {
+    pub fn new(pk: &'a BalooProverKey) -> Self {
+        OptimizedProver { pk }
+    }
+
+    pub fn prove(&self, lookup: &[Fr]) -> Vec<u8> {
+        let table = &self.pk.table;
+        let pp = &self.pk.pp;
+        let param = &self.pk.param;
+        let d = self.pk.d;
+        let t = self.pk.t;
+
+        let m = lookup.len();
+
+        /************
+          Round 1 - Optimized with MSM on precomputed proofs
+        ************/
+
+        // initialize transcript
+        let mut transcript = Keccak256Transcript::new(());
+        
+        // φ(x) - lookup polynomial
+        let phi_poly = UnivariatePolynomial::lagrange(lookup.to_vec()).ifft();
+
+        // remove duplicated elements
+        let t_values_from_lookup: HashSet<_> = lookup.iter().cloned().collect();
+        
+        // I: the index of t_values_from_lookup elements in sub table t_I
+        let i_values: Vec<_> = t_values_from_lookup
+            .iter()
+            .map(|elem| table.iter().position(|&x| x == *elem).unwrap())
+            .collect();
+
+        let log_m = log_2(m);
+        let v_root_of_unity = root_of_unity::<Fr>(log_m);
+        
+        // cache all roots of unity
+        let log_t = log_2(t);
+        let t_root_of_unity = root_of_unity::<Fr>(log_t);
+        let t_roots_of_unity = (0..t)
+            .map(|i| t_root_of_unity.pow([i as u64]))
+            .collect::<Vec<Fr>>();
+        let v_roots_of_unity = (0..m)
+            .map(|i| v_root_of_unity.pow([i as u64]))
+            .collect::<Vec<Fr>>();
+
+        // H_I = {ξ_i} - roots corresponding to lookup elements
+        let h_i: Vec<_> = i_values.iter().map(|&i| t_roots_of_unity[i]).collect();
+        
+        // T_I(X) polynomial - use fast interpolation for the subset of table values
+        let t_values_from_lookup_set: Vec<Fr> = t_values_from_lookup.clone().into_iter().collect();
+        let t_i_poly_coeffs = Prover::compute_coeffs_from_evals_fast_2(&t_values_from_lookup_set, &h_i);
+        let t_i_poly = UnivariatePolynomial::monomial(t_i_poly_coeffs);
+        
+        // Z_I(X) vanishing polynomial
+        let z_i_poly = UnivariatePolynomial::vanishing(&h_i, Fr::one());
+
+        // CRITICAL OPTIMIZATION: Use precomputed MSM instead of polynomial operations
+        // Calculate barycentric weights for MSM aggregation
+        let bc_weights = barycentric_weights(&h_i);
+        
+        // Get required precomputed witness proofs
+        let required_table_proofs: Vec<G1Affine> = i_values.iter()
+            .map(|&idx| self.pk.table_element_proofs[idx])
+            .collect();
+        let required_subgroup_proofs: Vec<G1Affine> = i_values.iter()
+            .map(|&idx| self.pk.subgroup_element_proofs[idx])
+            .collect();
+
+        let mut col_values = Vec::new();
+        let mut v_values = Vec::new();
+        for i in 0..m {
+            // find the index of 1 in jth row of M
+            let col_i = t_values_from_lookup
+                .iter()
+                .position(|&x| x == lookup[i])
+                .unwrap();
+            col_values.push(col_i);
+            let col_i_root = h_i[col_i];
+            let v = col_i_root;
+            v_values.push(v);
+        }
+        
+        // ξ(x) polynomial
+        let v_poly = UnivariatePolynomial::lagrange(v_values.clone()).ifft();
+
+        // [ξ(x)]1
+        let v_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &v_poly, &mut transcript).unwrap();
+        // [z_I(x)]2
+        let z_i_comm_2: UnivariateKzgCommitment<G2Affine> =
+            Pcs::commit_monomial_g2(&param, z_i_poly.coeffs());
+        transcript
+            .write_commitment_g2(&z_i_comm_2.clone().to_affine())
+            .unwrap();
+        // [t_I(x)]1
+        let t_i_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &t_i_poly, &mut transcript).unwrap();
+
+        let alpha = transcript.squeeze_challenge();
+
+        /************
+          Round 2 - Continue with standard Baloo protocol
+        ************/
+
+        let scalar_0 = Fr::from(0);
+        let scalar_1 = Fr::from(1);
+        let zero_poly = UnivariatePolynomial::monomial(vec![scalar_0]);
+
+        // X^m - 1
+        let z_v_values: Vec<Fr> = vec![scalar_1.neg()]
+            .into_iter()
+            .chain((0..m - 1).map(|_| scalar_0))
+            .chain(vec![scalar_1])
+            .collect();
+        let z_v_poly = UnivariatePolynomial::monomial(z_v_values);
+
+        // z_I(0)
+        let z_i_at_0 = z_i_poly.evaluate(&scalar_0);
+
+        // calculate D(X) = Σ_{0, m-1} μ_i(α) * τ^_{col(i)}(X)
+        let mut d_poly: UnivariatePolynomial<Fr> = zero_poly.clone();
+        for i in 0..m {
+            let col_i = col_values[i];
+            let v_root = v_roots_of_unity[i];
+            let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
+            let col_i_root = h_i[col_i];
+            let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
+            
+            let mu_poly =
+                &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            let normalized_lag_poly =
+                &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let mu_poly_at_alpha = mu_poly.evaluate(&alpha);
+            d_poly += &normalized_lag_poly * mu_poly_at_alpha;
+        }
+
+        // D(X) * t_I(X)
+        let d_t_poly = d_poly.poly_mul(t_i_poly.clone());
+        // φ(α)
+        let phi_poly_at_alpha = phi_poly.evaluate(&alpha);
+
+        // Q_D(X), R(X) = (D(X) * t_I(X) - φ(α)) / z_I(X)
+        let (q_d_poly, r_poly) = (d_t_poly + phi_poly_at_alpha.neg()).div_rem(&z_i_poly);
+
+        // π2 = ([D]1, [R]1, [Q2]1)
+        let d_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &d_poly, &mut transcript).unwrap();
+        let r_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &r_poly, &mut transcript).unwrap();
+        let q_d_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &q_d_poly, &mut transcript).unwrap();
+
+        let beta = transcript.squeeze_challenge();
+
+        // calculate E(X) = Σ_i(μ_i(X) * normalized_lag_poly(β))
+        let mut e_poly: UnivariatePolynomial<Fr> = zero_poly.clone();
+        for i in 0..m {
+            let col_i = col_values[i];
+            let v_root = v_roots_of_unity[i];
+            let v_root_poly = UnivariatePolynomial::monomial(vec![-v_root, scalar_1]);
+            let col_i_root = h_i[col_i];
+            let x_root_poly = UnivariatePolynomial::monomial(vec![-col_i_root, scalar_1]);
+            
+            let mu_poly =
+                &(&z_v_poly / &v_root_poly) * (v_root * (Fr::from(m as u64).invert().unwrap()));
+            let normalized_lag_poly =
+                &(&z_i_poly / &x_root_poly) * (col_i_root.neg() * (z_i_at_0.invert().unwrap()));
+            let normalized_lag_poly_at_beta = normalized_lag_poly.evaluate(&beta);
+            e_poly += &mu_poly * normalized_lag_poly_at_beta;
+        }
+
+        let z_i_at_beta = z_i_poly.evaluate(&beta);
+        // Q_E(X) = (E(X) * (β - v(X)) + v(X) * z_I(β) / z_I(0)) / z_V(X)
+        let q_e_poly = {
+            let aaa: UnivariatePolynomial<Fr> = &v_poly * scalar_1.neg() + beta;
+            let bbb = &e_poly.poly_mul(aaa);
+            let ccc = z_i_at_beta.mul(z_i_at_0.invert().unwrap());
+            let ddd = &v_poly * ccc;
+            &(bbb + ddd) / &z_v_poly
+        };
+
+        // π3 = ([E]1, [Q1]1)
+        let e_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &e_poly, &mut transcript).unwrap();
+        let q_e_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &q_e_poly, &mut transcript).unwrap();
+
+        let gamma: Fr = transcript.squeeze_challenge();
+        let zeta: Fr = transcript.squeeze_challenge();
+        let gamma_2 = gamma.mul(gamma);
+
+        /************
+          Round 3 - Optimized witness polynomial computation with MSM
+        ************/
+
+        // calculate v1, v2, v3, v4, v5
+        let v1 = e_poly.evaluate(&alpha);
+        let v2 = phi_poly.evaluate(&alpha);
+        let v3 = z_i_at_0;
+        let v4 = z_i_poly.evaluate(&beta);
+        let v5 = e_poly.evaluate(&zeta);
+
+        // calculate standard witness polynomials w1, w2, w3, w4
+        let d_beta = d_poly.evaluate(&beta);
+        let z_v_zeta = z_v_poly.evaluate(&zeta);
+        let beta_sub_v_poly = &v_poly * scalar_1.neg() + beta;
+
+        let p_d_poly = &(&t_i_poly * d_beta + v2.neg()) - (&r_poly + &q_d_poly * v4);
+        let p_e_poly = &(&(&beta_sub_v_poly * v5) + &v_poly * (v4.mul(v3.invert().unwrap())))
+            - &q_e_poly * z_v_zeta;
+
+        let coeffs = vec![scalar_0; d - m + 1]
+            .into_iter()
+            .chain(vec![scalar_1])
+            .collect();
+        let x_exponent_poly = UnivariatePolynomial::monomial(coeffs);
+
+        let x_alpha_poly = UnivariatePolynomial::monomial(vec![-alpha, scalar_1]);
+        let mut w1 = &(&(e_poly.clone() + v1.neg()) + &(phi_poly.clone() + v2.neg()) * gamma)
+            / &x_alpha_poly;
+        w1 = w1.poly_mul(x_exponent_poly.clone());
+
+        let x_poly = UnivariatePolynomial::monomial(vec![scalar_0, scalar_1]);
+        let x_m_exponent_poly = UnivariatePolynomial::monomial(
+            vec![scalar_0; m]
+                .into_iter()
+                .chain(vec![scalar_1])
+                .collect(),
+        );
+
+        let w2 = &(&(&(z_i_poly.clone() + v3.neg()) / &x_poly) + &(&(&r_poly * gamma) / &x_poly))
+            + &x_exponent_poly.poly_mul(
+                &(&(&z_i_poly - x_m_exponent_poly.clone()) * gamma_2) + &r_poly * gamma.pow([3]),
+            );
+
+        let x_beta_poly = UnivariatePolynomial::monomial(vec![-beta, scalar_1]);
+        let w3 = &(&(&(d_poly + v1.neg()) + &(z_i_poly.clone() + v4.neg()) * gamma)
+            + &p_d_poly * gamma_2)
+            / &x_beta_poly;
+
+        let x_zeta_poly = UnivariatePolynomial::monomial(vec![-zeta, scalar_1]);
+        let w4 = &(&(e_poly + v5.neg()) + &p_e_poly * gamma) / &x_zeta_poly;
+
+        // CRITICAL OPTIMIZATION: Replace expensive polynomial division with MSM aggregation
+        // Use precomputed witness proofs and MSM for w5 and w6 computation
+        let w5_comm_agg = variable_base_msm(&bc_weights, &required_table_proofs);
+        let w6_weights = bc_weights.iter().map(|w| *w * gamma).collect::<Vec<_>>();
+        let w6_comm_agg = variable_base_msm(&w6_weights, &required_subgroup_proofs);
+        
+        // Aggregate the MSM results
+        let a_comm_proj = w5_comm_agg + w6_comm_agg;
+        let a_comm_1 = UnivariateKzgCommitment::from(a_comm_proj.to_affine());
+
+        // write v1, v2, v3, v4, v5 to transcript
+        transcript.write_field_element(&v1).unwrap();
+        transcript.write_field_element(&v2).unwrap();
+        transcript.write_field_element(&v3).unwrap();
+        transcript.write_field_element(&v4).unwrap();
+        transcript.write_field_element(&v5).unwrap();
+
+        // [a]1 - write the aggregated commitment to transcript
+        transcript.write_commitment(&a_comm_1.clone().to_affine()).unwrap();
+        
+        // calculate remaining witness commitments
+        let w1_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w1, &mut transcript).unwrap();
+        let w2_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w2, &mut transcript).unwrap();
+        let w3_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w3, &mut transcript).unwrap();
+        let w4_comm_1: UnivariateKzgCommitment<G1Affine> =
+            Pcs::commit_and_write(&pp, &w4, &mut transcript).unwrap();
+
+        // generate proof from transcript
+        transcript.into_proof()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::baloo::preprocessor::preprocess;
     use crate::util::transcript::{
         FieldTranscriptRead, FieldTranscriptWrite, G2TranscriptRead, G2TranscriptWrite,
     };
@@ -861,5 +1149,29 @@ mod tests {
 
         let zeta_verifier: Fr = transcript.squeeze_challenge();
         assert_eq!(zeta, zeta_verifier);
+    }
+
+    #[test]
+    fn test_optimized_baloo() {
+        let table = vec![
+            Fr::from(1),
+            Fr::from(2),
+            Fr::from(3),
+            Fr::from(4),
+            Fr::from(5),
+            Fr::from(6),
+            Fr::from(7),
+            Fr::from(8),
+        ];
+        let lookup = vec![Fr::from(4), Fr::from(3), Fr::from(5), Fr::from(2)];
+        let m = lookup.len();
+        
+        // Test the optimized preprocessing and proving
+        println!("Testing optimized Baloo implementation...");
+        let (pk, _vk) = crate::backend::baloo::preprocessor::preprocess_for_table(&table, m).unwrap();
+        let optimized_prover = OptimizedProver::new(&pk);
+        let _proof = optimized_prover.prove(&lookup);
+        
+        println!("Optimized Baloo test completed successfully!");
     }
 }

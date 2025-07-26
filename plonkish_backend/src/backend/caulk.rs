@@ -273,6 +273,93 @@ where
         timings
     }
 
+    /// Test Caulk with k parameter and N:n ratio using unified range check data
+    pub fn test_caulk_by_k_with_ratio_unified(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+        use halo2_curves::bn256::{Bn256, Fr};
+
+        let mut timings: Vec<String> = vec![];
+        let start_total = std::time::Instant::now();
+
+        // Use unified range check data generation
+        let (c, values) = crate::util::benchmark::generate_range_check_data(k, n_to_n_ratio);
+        let N = c.len();
+        let m = values.len();
+
+        // 1. Setup
+        let start = std::time::Instant::now();
+        let (pp, vp) = Caulk::<Bn256>::setup(N, m).expect("Setup should not fail");
+        let duration1 = start.elapsed();
+        timings.push(format!("Setup: {}ms", duration1.as_millis()));
+        
+        // 2. Prove
+        let start = std::time::Instant::now();
+        let positions = Self::values_to_positions(&c, &values);
+        let proof = {
+            let mut transcript = Keccak256Transcript::new(());
+            Caulk::<Bn256>::prove(&pp, &c[..], &positions, &mut transcript)
+                .expect("Prove should not fail");
+            transcript.into_proof()
+        };
+        let duration2 = start.elapsed();
+        timings.push(format!("Prove: {}ms", duration2.as_millis()));
+        timings.push(format!("Proof size: {} bytes", proof.len()));
+
+        // 3. Verify
+        let start = std::time::Instant::now();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice()); 
+        Caulk::<Bn256>::verify(&vp, &mut transcript).expect("Verify should not fail");
+        let duration3 = start.elapsed();
+        timings.push(format!("Verify: {}ms", duration3.as_millis()));
+
+        let total_duration = start_total.elapsed();
+        timings.push(format!("Total time: {}ms", total_duration.as_millis()));
+
+        timings
+    }
+
+    /// Test optimized Caulk with k parameter and N:n ratio using unified range check data  
+    pub fn test_caulk_optimized_by_k_with_ratio_unified(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+        use halo2_curves::bn256::{Bn256, Fr};
+
+        let mut timings: Vec<String> = vec![];
+        let start_total = std::time::Instant::now();
+
+        // Use unified range check data generation
+        let (c, values) = crate::util::benchmark::generate_range_check_data(k, n_to_n_ratio);
+        let N = c.len();
+        let m = values.len();
+
+        // 1. Optimized Setup with precomputation
+        let start = std::time::Instant::now();
+        let (pp_opt, vp) = Caulk::<Bn256>::setup_optimized(N, m, &c).expect("Optimized setup should not fail");
+        let duration1 = start.elapsed();
+        timings.push(format!("Optimized Setup: {}ms", duration1.as_millis()));
+
+        // 2. Optimized Prove  
+        let start = std::time::Instant::now();
+        let positions = Self::values_to_positions(&c, &values);
+        let proof = {
+            let mut transcript = Keccak256Transcript::new(());
+            Caulk::<Bn256>::prove_optimized(&pp_opt, &c[..], &positions, &mut transcript)
+                .expect("Optimized prove should not fail");
+            transcript.into_proof()
+        };
+        let duration2 = start.elapsed();
+        timings.push(format!("Optimized Prove: {}ms", duration2.as_millis()));
+
+        // 3. Verify (same as regular version)
+        let start = std::time::Instant::now();
+        let mut transcript = Keccak256Transcript::from_proof((), proof.as_slice());
+        Caulk::<Bn256>::verify(&vp, &mut transcript).expect("Verify should not fail");
+        let duration3 = start.elapsed();
+        timings.push(format!("Verify: {}ms", duration3.as_millis()));
+
+        let total_duration = start_total.elapsed();
+        timings.push(format!("Total time: {}ms", total_duration.as_millis()));
+
+        timings
+    }
+
     // Run Caulk prove and verify steps with pre-generated parameters
     pub fn test_caulk_with_params(
         pp: &CaulkProverParam<Bn256>,

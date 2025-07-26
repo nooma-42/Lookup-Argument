@@ -112,17 +112,31 @@ class BenchmarkVisualizer:
         plt.style.use('default')
         fig, ax = plt.subplots(figsize=(12, 8))
         
-        # Color palette for different systems
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', 
-                 '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        # Fixed color palette for different systems
+        system_colors = {
+            'Baloo': '#1f77b4',    # blue
+            'CQ': '#ff7f0e',       # orange
+            'Caulk': '#2ca02c',    # green
+            'Lasso': '#d62728',    # red
+            'LogupGKR': '#9467bd', # purple
+            'Plookup': '#8c564b'   # brown
+        }
+        # Fallback colors for any other systems
+        fallback_colors = ['#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
         lines_plotted = 0
         
+        fallback_index = 0
         for i, (system, data) in enumerate(system_data.items()):
             if data.empty or metric not in data.columns:
                 continue
                 
-            color = colors[i % len(colors)]
+            # Use fixed color if system is known, otherwise use fallback
+            if system in system_colors:
+                color = system_colors[system]
+            else:
+                color = fallback_colors[fallback_index % len(fallback_colors)]
+                fallback_index += 1
             
             # Plot the line
             ax.plot(data['K'], data[metric], 

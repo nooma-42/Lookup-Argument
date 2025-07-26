@@ -128,6 +128,12 @@ impl Plookup<Fr, UnivariateKzg<Bn256>> {
 
         timings
     }
+
+    /// Test Plookup with k parameter and N:n ratio using unified range check data
+    pub fn test_plookup_by_k_with_ratio(k: usize, n_to_n_ratio: usize) -> Vec<String> {
+        let (table, lookup) = crate::util::benchmark::generate_range_check_data(k, n_to_n_ratio);
+        Self::test_plookup_by_input(table, lookup)
+    }
 }
 
 #[cfg(test)]

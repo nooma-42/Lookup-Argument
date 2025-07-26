@@ -43,11 +43,41 @@ echo ""
 
 # Run the benchmark
 cd benchmark
-time cargo bench --bench proof_system -- \
-    --system all \
+
+echo "🚀 Note: Running systems in two phases to avoid Lasso parallel race conditions"
+echo "📊 Phase 1: Lasso (sequential execution) - Thread-safe for multiple instances"
+echo "📊 Phase 2: Other systems (parallel execution) - No race condition issues"
+echo "💾 Both phases will append results to the same CSV files automatically"
+echo ""
+
+# Phase 1: Run Lasso separately without parallel execution to avoid race conditions
+echo "📊 Phase 1: Running Lasso benchmarks (sequential execution)..."
+echo "   🔧 Using --no-default-features to disable parallel execution and verbose timing logs"
+echo "   📝 Results will be written to benchmark_results.csv"
+echo ""
+time cargo bench --bench proof_system --no-default-features -- \
+    --system lasso \
     --k 5..14 \
     --ratio 2,4,8,16 \
     --format table
+
+echo ""
+echo "✅ Phase 1 completed - Lasso results saved to CSV"
+echo ""
+
+# Phase 2: Run other systems with parallel execution (they don't have the race condition issue)
+echo "📊 Phase 2: Running other systems (parallel execution)..."
+echo "   🔧 Using default parallel execution for optimal performance"
+echo "   📝 Results will be appended to the same benchmark_results.csv"
+echo ""
+time cargo bench --bench proof_system -- \
+    --system cq,baloo,logupgkr,plookup,caulk \
+    --k 5..14 \
+    --ratio 2,4,8,16 \
+    --format table
+
+echo ""
+echo "✅ Phase 2 completed - All system results saved to CSV"
 
 echo ""
 echo "📊 Benchmark completed! Checking results..."
