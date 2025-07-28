@@ -1,7 +1,8 @@
 use itertools::Itertools;
 use plonkish_backend::backend::{cq, logupgkr, plookup, lasso, caulk};
 use plonkish_backend::halo2_curves::bn256::{Bn256, Fr};
-use plonkish_backend::pcs::univariate::UnivariateKzg;
+use plonkish_backend::pcs::univariate::UnivariateKzg; 
+use plonkish_backend::util::testing::{TestType, TestResult};
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
@@ -19,6 +20,24 @@ use std::{
 type PlookupBn256 = plookup::Plookup<Fr, UnivariateKzg<Bn256>>;
 
 const OUTPUT_DIR: &str = "../target/bench";
+
+/// Types of operations that can be tested (currently only applies to Lasso)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Operation {
+    Range,  // Range check operations (default for all systems)
+    Add,    // Addition operations (Lasso only)
+    All,    // Both range and add operations (Lasso only)
+}
+
+impl std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operation::Range => write!(f, "Range"),
+            Operation::Add => write!(f, "Add"),
+            Operation::All => write!(f, "All"),
+        }
+    }
+}
 
 // Struct to track benchmark execution results (success or failure)
 #[derive(Debug, Clone)]
@@ -139,7 +158,7 @@ impl FailureTracker {
 
 fn main() {
     // Parse arguments
-    let (systems, k_range, n_to_n_ratios, verbose, output_format, debug) = parse_args();
+    let (systems, k_range, n_to_n_ratios, verbose, output_format, debug, test_type, operation) = parse_args();
     create_output(&systems);
 
     // Generate all benchmark tasks
@@ -158,6 +177,8 @@ fn main() {
     println!("📊 Systems: {}", systems.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
     println!("🔧 K values: {:?}", benchmark_tasks.iter().map(|(_, k, _)| *k).collect::<std::collections::HashSet<_>>().into_iter().collect::<Vec<_>>());
     println!("⚖️  N:n ratios: {:?}", n_to_n_ratios);
+    println!("🧪 Test type: {}", test_type);
+    println!("⚙️  Operation: {}", operation);
     println!("{}", "=".repeat(60));
 
     // Create CSV writer and failure tracker for incremental writing
@@ -203,7 +224,7 @@ fn main() {
 
         // Execute benchmark with error handling
         let outcome = match std::panic::catch_unwind(|| {
-            system.bench(*k, *ratio, verbose, debug)
+            system.bench_with_test_type(*k, *ratio, verbose, debug, test_type, operation)
         }) {
             Ok(result) => {
                 // Write successful result to CSV immediately
@@ -1074,13 +1095,67 @@ impl System {
 
     // Benchmark a system with k value and N:n ratio
     fn bench(&self, k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-        match self {
-            System::Baloo => bench_baloo(k, n_to_n_ratio, verbose, debug),
-            System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
-            System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
-            System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
-            System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
-            System::Lasso => bench_lasso(k, n_to_n_ratio, verbose, debug),
+        self.bench_with_test_type(k, n_to_n_ratio, verbose, debug, TestType::Performance, Operation::Range)
+    }
+
+    // Benchmark a system with specific test type and operation
+    fn bench_with_test_type(&self, k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool, test_type: TestType, operation: Operation) -> BenchmarkResult {
+        match test_type {
+            TestType::Performance => {
+                // Performance benchmarking (existing functionality)
+                match (self, operation) {
+                    (System::Lasso, Operation::Add) => bench_lasso_add(k, n_to_n_ratio, verbose, debug),
+                    _ => {
+                        // Default range check performance for all systems
+                        match self {
+                            System::Baloo => bench_baloo(k, n_to_n_ratio, verbose, debug),
+                            System::CQ => bench_CQ(k, n_to_n_ratio, verbose, debug),
+                            System::LogupGKR => bench_logup_gkr(k, n_to_n_ratio, verbose, debug),
+                            System::Plookup => bench_plookup(k, n_to_n_ratio, verbose, debug),
+                            System::Caulk => bench_caulk(k, n_to_n_ratio, verbose, debug),
+                            System::Lasso => bench_lasso(k, n_to_n_ratio, verbose, debug),
+                        }
+                    }
+                }
+            }
+            TestType::Soundness => {
+                // Soundness testing - invalid inputs should be rejected
+                match (self, operation) {
+                    (System::Lasso, Operation::Add) => bench_lasso_add_soundness(k, n_to_n_ratio, verbose, debug),
+                    (System::Lasso, Operation::Range) => bench_lasso_range_soundness(k, n_to_n_ratio, verbose, debug),
+                    _ => {
+                        // For other systems, we don't have soundness tests yet
+                        BenchmarkResult {
+                            system: *self,
+                            k_value: k,
+                            n_to_n_ratio,
+                            setup_time: 0,
+                            prove_time: 0,
+                            verify_time: 0,
+                            proof_size: 0,
+                        }
+                    }
+                }
+            }
+            TestType::Completeness => {
+                // Completeness testing - valid inputs should be accepted
+                match (self, operation) {
+                    (System::Lasso, Operation::Add) => bench_lasso_add_completeness(k, n_to_n_ratio, verbose, debug),
+                    (System::Lasso, Operation::Range) => bench_lasso_range_completeness(k, n_to_n_ratio, verbose, debug),
+                    _ => {
+                        // For other systems, we don't have completeness tests yet
+                        BenchmarkResult {
+                            system: *self,
+                            k_value: k,
+                            n_to_n_ratio,
+                            setup_time: 0,
+                            prove_time: 0,
+                            verify_time: 0,
+                            proof_size: 0,
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1098,11 +1173,11 @@ impl Display for System {
     }
 }
 
-fn parse_args() -> (Vec<System>, Range<usize>, Vec<usize>, bool, OutputFormat, bool) {
-    let (systems, k_range, n_to_n_ratios, verbose, output_format, debug) =
+fn parse_args() -> (Vec<System>, Range<usize>, Vec<usize>, bool, OutputFormat, bool, TestType, Operation) {
+    let (systems, k_range, n_to_n_ratios, verbose, output_format, debug, test_type, operation) =
         args().chain(Some("".to_string())).tuple_windows().fold(
-            (Vec::new(), 20..26, vec![2], false, OutputFormat::Table, false),
-            |(mut systems, mut k_range, mut n_to_n_ratios, mut verbose, mut output_format, mut debug),
+            (Vec::new(), 20..26, vec![2], false, OutputFormat::Table, false, TestType::Performance, Operation::Range),
+            |(mut systems, mut k_range, mut n_to_n_ratios, mut verbose, mut output_format, mut debug, mut test_type, mut operation),
              (key, value)| {
                 match key.as_str() {
                     "--system" => {
@@ -1168,9 +1243,21 @@ fn parse_args() -> (Vec<System>, Range<usize>, Vec<usize>, bool, OutputFormat, b
                         "json" => output_format = OutputFormat::JSON,
                         _ => panic!("format should be one of {{table, compact, csv, json}}"),
                     },
+                    "--test-type" => match value.to_lowercase().as_str() {
+                        "performance" => test_type = TestType::Performance,
+                        "soundness" => test_type = TestType::Soundness,
+                        "completeness" => test_type = TestType::Completeness,
+                        _ => panic!("test-type should be one of {{performance, soundness, completeness}}"),
+                    },
+                    "--operation" => match value.to_lowercase().as_str() {
+                        "range" => operation = Operation::Range,
+                        "add" => operation = Operation::Add,
+                        "all" => operation = Operation::All,
+                        _ => panic!("operation should be one of {{range, add, all}}"),
+                    },
                     _ => {}
                 }
-                (systems, k_range, n_to_n_ratios, verbose, output_format, debug)
+                (systems, k_range, n_to_n_ratios, verbose, output_format, debug, test_type, operation)
             },
         );
 
@@ -1179,7 +1266,7 @@ fn parse_args() -> (Vec<System>, Range<usize>, Vec<usize>, bool, OutputFormat, b
         systems = System::all();
     };
 
-    (systems, k_range, n_to_n_ratios, verbose, output_format, debug)
+    (systems, k_range, n_to_n_ratios, verbose, output_format, debug, test_type, operation)
 }
 
 fn create_output(systems: &[System]) {
@@ -1188,6 +1275,210 @@ fn create_output(systems: &[System]) {
     }
     for system in systems {
         File::create(system.output_path()).unwrap();
+    }
+}
+
+// Add the benchmark function for Lasso add operations
+fn bench_lasso_add(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    let timings = if !verbose && !debug {
+        with_suppressed_output(|| {
+            lasso::test_lasso_add_by_k_with_ratio(k, n_to_n_ratio)
+        })
+    } else {
+        println!("Running Lasso add benchmark with k={}, N:n ratio={}", k, n_to_n_ratio);
+        let range_size = 1 << k;
+        let lookup_size = range_size / n_to_n_ratio;
+        println!("Range size: {} ({}-bit), Lookup size: {}", range_size, k, lookup_size);
+        
+        let result = lasso::test_lasso_add_by_k_with_ratio(k, n_to_n_ratio);
+        
+        if verbose {
+            println!("Lasso add test completed. Results:");
+            for timing in &result {
+                println!("  {}", timing);
+            }
+        }
+        
+        result
+    };
+
+    // Write results to file
+    for timing in &timings {
+        writeln!(&mut System::Lasso.output(), "{}", timing).unwrap();
+    }
+
+    let all_timings = timings.join("\n");
+
+    if debug {
+        println!("\nDEBUG: Lasso add raw timing output:");
+        println!("{}", all_timings);
+    }
+
+    // Extract timing values
+    let setup_time = extract_setup_time(&all_timings, debug);
+    let prove_time = extract_prove_time(&all_timings, debug);
+    let verify_time = extract_verify_time(&all_timings, debug);
+    let proof_size = extract_proof_size(&all_timings, debug);
+
+    if verbose || debug {
+        println!(
+            "Lasso add times extracted - Setup: {}ms, Prove: {}ms, Verify: {}ms, Proof size: {}B",
+            setup_time, prove_time, verify_time, proof_size
+        );
+    }
+
+    BenchmarkResult {
+        system: System::Lasso,
+        k_value: k,
+        n_to_n_ratio,
+        setup_time,
+        prove_time,
+        verify_time,
+        proof_size,
+    }
+}
+
+// Benchmark function for Lasso add soundness testing
+fn bench_lasso_add_soundness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    let start_time = std::time::Instant::now();
+    
+    match lasso::test_lasso_add_soundness_by_k(k, n_to_n_ratio) {
+        Ok(timings) => {
+            // Parse timing information from the result
+            let mut setup_time = 0u64;
+            let mut prove_time = 0u64;
+            let mut verify_time = 0u64;
+            
+            for timing in &timings {
+                if let Some(time_str) = timing.strip_prefix("Setup: ").and_then(|s| s.strip_suffix("ms")) {
+                    setup_time = time_str.parse().unwrap_or(0);
+                } else if let Some(time_str) = timing.strip_prefix("Prove: ").and_then(|s| s.strip_suffix("ms")) {
+                    prove_time = time_str.parse().unwrap_or(0);
+                } else if let Some(time_str) = timing.strip_prefix("Verify: ").and_then(|s| s.strip_suffix("ms")) {
+                    verify_time = time_str.parse().unwrap_or(0);
+                }
+            }
+            
+            // Check if verification actually failed (which is expected for soundness)
+            let verification_failed = timings.iter().any(|t| 
+                t.contains("Error:") && 
+                (t.contains("expected for soundness test") || 
+                 t.contains("verification failed") ||
+                 t.contains("verify failed"))
+            );
+            
+            if verbose || debug {
+                if verification_failed {
+                    println!("Soundness test passed: invalid add operations correctly rejected during verification");
+                } else {
+                    println!("WARNING: Soundness test failed - invalid operations were incorrectly accepted");
+                }
+                for timing in &timings {
+                    println!("  {}", timing);
+                }
+            }
+            
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time,
+                prove_time,
+                verify_time,
+                proof_size: 0,
+            }
+        }
+        Err(error_msg) => {
+            // This means proving phase failed (assertion error)
+            if verbose || debug {
+                println!("Soundness test: proving phase failed (assertion error): {}", error_msg);
+            }
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time: 0,
+                prove_time: 0,
+                verify_time: start_time.elapsed().as_millis() as u64,
+                proof_size: 0,
+            }
+        }
+    }
+}
+
+// Benchmark function for Lasso add completeness testing
+fn bench_lasso_add_completeness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    let start_time = std::time::Instant::now();
+    
+    match lasso::test_lasso_add_completeness_by_k(k, n_to_n_ratio) {
+        Ok(timings) => {
+            // This is expected - completeness test should accept valid operations
+            if verbose || debug {
+                println!("Completeness test passed: valid add operations correctly accepted");
+                for timing in &timings {
+                    println!("  {}", timing);
+                }
+            }
+            
+            let all_timings = timings.join("\n");
+            let setup_time = extract_setup_time(&all_timings, debug);
+            let prove_time = extract_prove_time(&all_timings, debug);
+            let verify_time = extract_verify_time(&all_timings, debug);
+            let proof_size = extract_proof_size(&all_timings, debug);
+            
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time,
+                prove_time,
+                verify_time,
+                proof_size,
+            }
+        }
+        Err(e) => {
+            // This should not happen for completeness test - valid operations should be accepted
+            if verbose || debug {
+                println!("WARNING: Completeness test failed: {}", e);
+            }
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time: 0,
+                prove_time: 0,
+                verify_time: start_time.elapsed().as_millis() as u64,
+                proof_size: 0,
+            }
+        }
+    }
+}
+
+// Benchmark function for Lasso range soundness testing
+fn bench_lasso_range_soundness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // For now, return a placeholder result since range soundness testing isn't implemented yet
+    BenchmarkResult {
+        system: System::Lasso,
+        k_value: k,
+        n_to_n_ratio,
+        setup_time: 0,
+        prove_time: 0,
+        verify_time: 0,
+        proof_size: 0,
+    }
+}
+
+// Benchm0ark function for Lasso range completeness testing
+fn bench_lasso_range_completeness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
+    // For now, return a placeholder result since range completeness testing isn't implemented yet
+    BenchmarkResult {
+        system: System::Lasso,
+        k_value: k,
+        n_to_n_ratio,
+        setup_time: 0,
+        prove_time: 0,
+        verify_time: 0,
+        proof_size: 0,
     }
 }
 

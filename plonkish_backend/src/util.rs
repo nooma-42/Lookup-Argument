@@ -5,6 +5,8 @@ pub mod code;
 pub mod expression;
 pub mod hash;
 pub mod parallel;
+#[cfg(any(test, feature = "benchmark"))]
+pub mod testing;
 mod timer;
 pub mod transcript;
 

@@ -18,6 +18,81 @@ pub fn generate_range_check_values(k: usize, n_to_n_ratio: usize) -> Vec<Fr> {
         .collect()
 }
 
+/// Generate invalid values for soundness testing
+/// 
+/// This function creates test data that should be rejected by range check operations.
+/// - `k`: Log of the range size (valid range is [0, 2^k-1])
+/// - `n_to_n_ratio`: The ratio N:n where N is table size and n is lookup size
+/// 
+/// Returns a vector of Fr elements representing values outside the valid range
+pub fn generate_invalid_values(k: usize, n_to_n_ratio: usize) -> Vec<Fr> {
+    let range_size = 1 << k;
+    let lookup_size = range_size / n_to_n_ratio;
+    
+    // Generate values outside the valid range [0, 2^k-1]
+    (0..lookup_size)
+        .map(|i| Fr::from((range_size + i + 1) as u64)) // All values >= 2^k
+        .collect()
+}
+
+/// Generate test data for addition operations
+/// 
+/// This function creates test data for addition lookup tables used in Lasso.
+/// - `k`: Log of the range size for operands
+/// - `n_to_n_ratio`: The ratio N:n where N is table size and n is lookup size
+/// 
+/// Returns a vector of (a, b, sum) tuples where all values are in range [0, 2^k-1]
+pub fn generate_add_operation_data(k: usize, n_to_n_ratio: usize) -> Vec<(Fr, Fr, Fr)> {
+    let range_size = 1 << k;
+    let lookup_size = range_size / n_to_n_ratio;
+    
+    let mut add_cases = Vec::new();
+    
+    for i in 0..lookup_size {
+        // Generate operands that won't overflow the range
+        let a = (i / 2) % (range_size / 2);
+        let b = i % (range_size / 2);
+        let sum = (a + b) % range_size;
+        
+        add_cases.push((
+            Fr::from(a as u64),
+            Fr::from(b as u64),
+            Fr::from(sum as u64)
+        ));
+    }
+    
+    add_cases
+}
+
+/// Generate invalid test data for addition operations (soundness testing)
+/// 
+/// This function creates test data with incorrect addition results that should be rejected.
+/// - `k`: Log of the range size for operands
+/// - `n_to_n_ratio`: The ratio N:n where N is table size and n is lookup size
+/// 
+/// Returns a vector of (a, b, wrong_sum) tuples where wrong_sum != a + b
+pub fn generate_invalid_add_operation_data(k: usize, n_to_n_ratio: usize) -> Vec<(Fr, Fr, Fr)> {
+    let range_size = 1 << k;
+    let lookup_size = range_size / n_to_n_ratio;
+    
+    let mut invalid_cases = Vec::new();
+    
+    for i in 0..lookup_size {
+        let a = i % (range_size / 2);
+        let b = (i + 1) % (range_size / 2);
+        let correct_sum = (a + b) % range_size;
+        let wrong_sum = (correct_sum + 1 + i) % range_size; // Intentionally wrong
+        
+        invalid_cases.push((
+            Fr::from(a as u64),
+            Fr::from(b as u64),
+            Fr::from(wrong_sum as u64)
+        ));
+    }
+    
+    invalid_cases
+}
+
 /// Generate a table for range check benchmarking
 /// 
 /// This function creates the lookup table containing all values in the range [0, 2^k-1]
@@ -66,6 +141,75 @@ mod tests {
         for value in values {
             let val_u64 = u64::from(value.to_repr().as_ref()[0]);
             assert!(val_u64 < 16);
+        }
+    }
+
+    #[test]
+    fn test_generate_invalid_values() {
+        let k = 3; // Valid range [0, 7]
+        let n_to_n_ratio = 4;
+        
+        let values = generate_invalid_values(k, n_to_n_ratio);
+        
+        // Should have 8/4 = 2 invalid values
+        assert_eq!(values.len(), 2);
+        
+        // All values should be outside valid range [0, 7]
+        for value in values {
+            let val_u64 = u64::from(value.to_repr().as_ref()[0]);
+            assert!(val_u64 >= 8); // Should be >= 2^k
+        }
+    }
+
+    #[test]
+    fn test_generate_add_operation_data() {
+        let k = 4; // Range [0, 15]
+        let n_to_n_ratio = 8;
+        
+        let cases = generate_add_operation_data(k, n_to_n_ratio);
+        
+        // Should have 16/8 = 2 cases
+        assert_eq!(cases.len(), 2);
+        
+        // Verify all cases have valid additions
+        for (a, b, sum) in cases {
+            let a_u64 = u64::from(a.to_repr().as_ref()[0]);
+            let b_u64 = u64::from(b.to_repr().as_ref()[0]);
+            let sum_u64 = u64::from(sum.to_repr().as_ref()[0]);
+            
+            // All values should be in range [0, 15]
+            assert!(a_u64 < 16);
+            assert!(b_u64 < 16);
+            assert!(sum_u64 < 16);
+            
+            // Sum should be correct (modulo 16)
+            assert_eq!((a_u64 + b_u64) % 16, sum_u64);
+        }
+    }
+
+    #[test]
+    fn test_generate_invalid_add_operation_data() {
+        let k = 3; // Range [0, 7]
+        let n_to_n_ratio = 4;
+        
+        let cases = generate_invalid_add_operation_data(k, n_to_n_ratio);
+        
+        // Should have 8/4 = 2 invalid cases
+        assert_eq!(cases.len(), 2);
+        
+        // Verify all cases have incorrect additions
+        for (a, b, wrong_sum) in cases {
+            let a_u64 = u64::from(a.to_repr().as_ref()[0]);
+            let b_u64 = u64::from(b.to_repr().as_ref()[0]);
+            let wrong_sum_u64 = u64::from(wrong_sum.to_repr().as_ref()[0]);
+            
+            // All values should be in range [0, 7]
+            assert!(a_u64 < 8);
+            assert!(b_u64 < 8);
+            assert!(wrong_sum_u64 < 8);
+            
+            // Sum should be incorrect (not equal to a + b mod 8)
+            assert_ne!((a_u64 + b_u64) % 8, wrong_sum_u64);
         }
     }
     
