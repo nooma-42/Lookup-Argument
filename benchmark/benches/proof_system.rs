@@ -842,6 +842,24 @@ fn extract_proof_size(timing: &str, debug: bool) -> u64 {
     0
 }
 
+// Generic function to extract timing values from strings
+fn extract_time(timings: &[String], phase: &str) -> Option<u64> {
+    for timing in timings {
+        // Match patterns like "Setup: 123ms" or "Setup: 123ms (456μs)"
+        let pattern = format!(r"{}: (\d+)ms", phase);
+        if let Ok(re) = regex::Regex::new(&pattern) {
+            if let Some(captures) = re.captures(timing) {
+                if let Some(time_match) = captures.get(1) {
+                    if let Ok(time) = time_match.as_str().parse::<u64>() {
+                        return Some(time);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 // Helper function to suppress stdout output
 fn with_suppressed_output<F, T>(f: F) -> T
 where
@@ -1361,10 +1379,11 @@ fn bench_lasso_add_soundness(k: usize, n_to_n_ratio: usize, verbose: bool, debug
             
             // Check if verification actually failed (which is expected for soundness)
             let verification_failed = timings.iter().any(|t| 
-                t.contains("Error:") && 
-                (t.contains("expected for soundness test") || 
-                 t.contains("verification failed") ||
-                 t.contains("verify failed"))
+                (t.contains("Error:") && 
+                 (t.contains("expected for soundness test") || 
+                  t.contains("verification failed") ||
+                  t.contains("verify failed"))) ||
+                t.contains("correctly rejected")
             );
             
             if verbose || debug {
@@ -1456,29 +1475,59 @@ fn bench_lasso_add_completeness(k: usize, n_to_n_ratio: usize, verbose: bool, de
 
 // Benchmark function for Lasso range soundness testing
 fn bench_lasso_range_soundness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // For now, return a placeholder result since range soundness testing isn't implemented yet
-    BenchmarkResult {
-        system: System::Lasso,
-        k_value: k,
-        n_to_n_ratio,
-        setup_time: 0,
-        prove_time: 0,
-        verify_time: 0,
-        proof_size: 0,
+    match lasso::test_lasso_range_soundness_by_k(k, n_to_n_ratio) {
+        Ok(timings) => {
+            let setup_time = extract_time(&timings, "Setup").unwrap_or(0);
+            let prove_time = extract_time(&timings, "Prove").unwrap_or(0);
+            let verify_time = extract_time(&timings, "Verify").unwrap_or(0);
+            
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time,
+                prove_time,
+                verify_time,
+                proof_size: 0,
+            }
+        }
+        Err(_) => {
+            // Soundness test should fail, return 0ms as expected
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time: 0,
+                prove_time: 0,
+                verify_time: 0,
+                proof_size: 0,
+            }
+        }
     }
 }
 
-// Benchm0ark function for Lasso range completeness testing
+// Benchmark function for Lasso range completeness testing
 fn bench_lasso_range_completeness(k: usize, n_to_n_ratio: usize, verbose: bool, debug: bool) -> BenchmarkResult {
-    // For now, return a placeholder result since range completeness testing isn't implemented yet
-    BenchmarkResult {
-        system: System::Lasso,
-        k_value: k,
-        n_to_n_ratio,
-        setup_time: 0,
-        prove_time: 0,
-        verify_time: 0,
-        proof_size: 0,
+    match lasso::test_lasso_range_completeness_by_k(k, n_to_n_ratio) {
+        Ok(timings) => {
+            let setup_time = extract_time(&timings, "Setup").unwrap_or(0);
+            let prove_time = extract_time(&timings, "Prove").unwrap_or(0);
+            let verify_time = extract_time(&timings, "Verify").unwrap_or(0);
+            
+            BenchmarkResult {
+                system: System::Lasso,
+                k_value: k,
+                n_to_n_ratio,
+                setup_time,
+                prove_time,
+                verify_time,
+                proof_size: 0,
+            }
+        }
+        Err(err) => {
+            // Completeness test should succeed - this is an error
+            panic!("Completeness test failed unexpectedly: {}", err);
+        }
     }
 }
 

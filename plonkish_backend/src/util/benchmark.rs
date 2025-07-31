@@ -52,7 +52,12 @@ pub fn generate_add_operation_data(k: usize, n_to_n_ratio: usize) -> Vec<(Fr, Fr
         // Generate operands that won't overflow the range
         let a = (i / 2) % (range_size / 2);
         let b = i % (range_size / 2);
-        let sum = (a + b) % range_size;
+        let sum = a + b;  // For completeness test, sum should be the actual sum
+        
+        // Skip if sum exceeds the range (would be invalid for the table)
+        if sum >= range_size {
+            continue;
+        }
         
         add_cases.push((
             Fr::from(a as u64),
