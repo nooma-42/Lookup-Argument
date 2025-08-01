@@ -135,7 +135,7 @@ Use `log_info!()` and `log_debug!()` macros in code for structured logging.
 
 ### Git Configuration
 - Main branch: `main`
-- Current branch: `non-parallel-version-fairer-bench-baseline`
+- Current branch: `soundness&completeness`
 
 ### Dependencies
 - Uses forked versions of `halo2` and related libraries for benchmark compatibility
